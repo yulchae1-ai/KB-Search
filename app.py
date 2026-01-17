@@ -15,8 +15,8 @@ import io
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
 st.set_page_config(page_title="K-STAT 무역통계 수집기", layout="centered")
-st.title("🚢 K-STAT 데이터 수집기 (한글폰트 Ver)")
-st.info("서버에 한글 폰트가 설치되어 있어야 정상 작동합니다.")
+st.title("🚢 K-STAT 데이터 수집기 (강제클릭 Ver)")
+st.info("한글 폰트 적용 완료. 자바스크립트 강제 클릭으로 조회합니다.")
 
 # 입력 폼
 with st.form("input_form"):
@@ -42,7 +42,7 @@ def run_crawler(target_hsk):
     options.add_argument(f"user-agent={ua}")
 
     driver = webdriver.Chrome(options=options)
-    wait = WebDriverWait(driver, 20)
+    wait = WebDriverWait(driver, 15)
     actions = ActionChains(driver)
 
     results = []
@@ -53,14 +53,20 @@ def run_crawler(target_hsk):
         driver.get("https://stat.kita.net/")
         time.sleep(2)
         
-        # '국내통계' 클릭
-        btn_1 = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), '국내통계')]")))
-        btn_1.click()
+        # '국내통계' 클릭 (JS 강제 클릭)
+        try:
+            btn_1 = driver.find_element(By.XPATH, "//*[contains(text(), '국내통계')]")
+            driver.execute_script("arguments[0].click();", btn_1)
+        except:
+            pass # 이미 열려있거나 못 찾으면 패스
         time.sleep(1)
 
-        # '품목 수출입' 클릭
-        btn_2 = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), '품목 수출입') or contains(text(), '품목수출입')]")))
-        btn_2.click()
+        # '품목 수출입' 클릭 (JS 강제 클릭)
+        try:
+            btn_2 = wait.until(EC.presence_of_element_located((By.XPATH, "//*[contains(text(), '품목 수출입') or contains(text(), '품목수출입')]")))
+            driver.execute_script("arguments[0].click();", btn_2)
+        except:
+            status.warning("메뉴 이동 중 문제 발생, 계속 진행합니다.")
         time.sleep(3) 
 
         # [단계 2] Iframe 탐색 및 '총괄' 클릭
@@ -76,7 +82,7 @@ def run_crawler(target_hsk):
                 driver.switch_to.default_content() # 초기화
                 driver.switch_to.frame(iframes[i]) # 프레임 진입
                 
-                # 총괄 버튼이 보이나요?
+                # 총괄 버튼이 보이나요? (클릭 가능 여부 상관없이 존재만 확인)
                 if len(driver.find_elements(By.XPATH, "//*[contains(text(), '총괄')]")) > 0:
                     frame_found = True
                     break 
@@ -86,14 +92,21 @@ def run_crawler(target_hsk):
         if not frame_found:
             driver.switch_to.default_content()
 
-        # 3. '총괄' 버튼 클릭
-        summary_tab = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), '총괄')]")))
-        summary_tab.click()
+        # 3. '총괄' 버튼 클릭 (JS 강제 클릭 사용)
+        try:
+            summary_tab = driver.find_element(By.XPATH, "//*[contains(text(), '총괄')]")
+            # ★ 핵심: 화면 가림 무시하고 자바스크립트로 눌러버리기
+            driver.execute_script("arguments[0].click();", summary_tab)
+            status.write("✅ '총괄' 탭 강제 클릭 성공")
+        except Exception as e:
+            status.warning(f"'총괄' 탭 클릭 실패 (이미 활성화 되었을 수 있음): {e}")
+        
         time.sleep(1)
         
         # [단계 3] TAB 키 네비게이션
         status.write(f"⏳ HSK {target_hsk} 입력 (TAB 이동)...")
         
+        # 총괄 탭을 한 번 더 포커스(클릭) 하고 시작
         actions.send_keys(Keys.TAB)
         actions.send_keys(Keys.TAB)
         actions.send_keys(Keys.TAB)
@@ -108,30 +121,36 @@ def run_crawler(target_hsk):
         status.write("⏳ 검색 결과(파란색 링크) 클릭...")
         
         link_clicked = False
+        
+        # 현재 프레임에서 링크 찾기 시도
         try:
             link_xpath = f"//a[contains(text(), '{target_hsk}')]"
-            driver.find_element(By.XPATH, link_xpath).click()
+            link_element = driver.find_element(By.XPATH, link_xpath)
+            driver.execute_script("arguments[0].click();", link_element) # 강제 클릭
             link_clicked = True
         except:
+            # 안 되면 다시 iframe 뒤지기
             driver.switch_to.default_content()
             iframes = driver.find_elements(By.TAG_NAME, "iframe")
             for frame in iframes:
                 try:
                     driver.switch_to.default_content()
                     driver.switch_to.frame(frame)
-                    driver.find_element(By.XPATH, f"//a[contains(text(), '{target_hsk}')]").click()
+                    link_element = driver.find_element(By.XPATH, f"//a[contains(text(), '{target_hsk}')]")
+                    driver.execute_script("arguments[0].click();", link_element) # 강제 클릭
                     link_clicked = True
                     break
                 except:
                     pass
         
         if not link_clicked:
-            status.error("❌ 결과 링크를 찾지 못했습니다. (폰트 문제 해결 후 다시 시도하세요)")
+            status.error("❌ 결과 링크를 찾지 못했습니다.")
             st.image(driver.get_screenshot_as_png())
             return None
 
         time.sleep(5) 
 
+        # 새 창 전환
         if len(driver.window_handles) > 1:
             driver.switch_to.window(driver.window_handles[-1])
 
@@ -159,7 +178,9 @@ def run_crawler(target_hsk):
             m = t['month']
             
             try:
-                driver.find_element(By.XPATH, f"//*[contains(text(), '{y}')]").click()
+                # 연도 버튼도 강제 클릭
+                year_btn = driver.find_element(By.XPATH, f"//*[contains(text(), '{y}')]")
+                driver.execute_script("arguments[0].click();", year_btn)
                 time.sleep(2)
             except:
                 pass
