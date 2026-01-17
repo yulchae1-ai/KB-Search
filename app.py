@@ -16,7 +16,7 @@ import io
 # --------------------------------------------------------------------------
 st.set_page_config(page_title="K-STAT 무역통계 수집기", layout="centered")
 st.title("🚢 K-STAT 키보드 제어 모드")
-st.info("TAB 키를 이용해 입력창을 찾아가는 '키보드 네비게이션' 방식으로 작동합니다.")
+st.info("Iframe 내부를 자동으로 탐색하여 TAB 키로 데이터를 조회합니다.")
 
 # 입력 폼
 with st.form("input_form"):
@@ -63,19 +63,38 @@ def run_crawler(target_hsk):
         btn_2.click()
         time.sleep(3) 
 
-        # [단계 2] '총괄' 탭 클릭 후 TAB 이동 (핵심 로직)
-        status.write("⏳ '총괄' 클릭 후 TAB 키 4번 입력 중...")
+        # [단계 2] Iframe 탐색 및 '총괄' 클릭 (여기가 수정됨)
+        status.write("⏳ '총괄' 버튼이 있는 프레임 탐색 중...")
         
-        # iframe 처리 (혹시 모르니 메인 프레임으로 복귀)
-        driver.switch_to.default_content()
+        # 1. 화면에 있는 모든 iframe을 찾음
+        iframes = driver.find_elements(By.TAG_NAME, "iframe")
+        frame_found = False
         
-        # 1. '총괄' 버튼 찾아서 클릭 (포커스 잡기)
+        # 2. 하나씩 들어가서 '총괄' 버튼이 있는지 확인
+        for i in range(len(iframes)):
+            try:
+                driver.switch_to.default_content() # 초기화
+                driver.switch_to.frame(iframes[i]) # 프레임 진입
+                
+                # 총괄 버튼이 보이나요?
+                if len(driver.find_elements(By.XPATH, "//*[contains(text(), '총괄')]")) > 0:
+                    frame_found = True
+                    break # 찾았으면 거기 머무름
+            except:
+                continue
+        
+        if not frame_found:
+            # 못 찾았으면 메인 화면에 있을 수도 있으니 메인으로 복귀
+            driver.switch_to.default_content()
+
+        # 3. '총괄' 버튼 클릭
         summary_tab = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), '총괄')]")))
         summary_tab.click()
         time.sleep(1)
         
-        # 2. TAB 4번 누르고 HSK 입력 후 엔터
-        # (총괄 버튼에서 TAB 4번 -> 입력창 도착 -> 입력 -> 엔터)
+        # [단계 3] TAB 키 네비게이션
+        status.write(f"⏳ HSK {target_hsk} 입력 시도 (TAB 4회)...")
+        
         actions.send_keys(Keys.TAB)
         actions.send_keys(Keys.TAB)
         actions.send_keys(Keys.TAB)
@@ -84,55 +103,45 @@ def run_crawler(target_hsk):
         actions.send_keys(Keys.ENTER)
         actions.perform()
         
-        status.write(f"⏳ HSK {target_hsk} 입력 및 엔터 입력 완료! 결과 로딩 대기...")
         time.sleep(5) # 조회 결과 로딩 대기
 
-        # [단계 3] 결과 확인 및 상세 진입 (파란색 링크)
-        status.write("⏳ 상세 정보(파란색 링크) 클릭 시도...")
+        # [단계 4] 상세 정보 클릭 (파란색 링크)
+        status.write("⏳ 검색 결과(파란색 링크) 클릭...")
         
-        # 입력이 제대로 되었다면 결과 화면에 링크가 떴을 것임
-        # iframe 안에 결과가 있을 수 있으므로 iframe 탐색
+        # 검색 결과는 보통 같은 프레임에 뜨지만, 혹시 모르니 다시 확인
         link_clicked = False
-        iframes = driver.find_elements(By.TAG_NAME, "iframe")
-        
-        for i in range(len(iframes) + 1):
-            try:
-                if i > 0:
-                    driver.switch_to.default_content()
-                    driver.switch_to.frame(iframes[i-1])
-                
-                # 링크 클릭 시도
-                link_xpath = f"//a[contains(text(), '{target_hsk}')]"
-                detail_link = driver.find_element(By.XPATH, link_xpath)
-                detail_link.click()
-                link_clicked = True
-                break
-            except:
-                continue
-        
-        if not link_clicked:
-            # 혹시 메인 프레임에 있을 수도 있으니 다시 시도
+        try:
+            # 현재 프레임에서 시도
+            link_xpath = f"//a[contains(text(), '{target_hsk}')]"
+            driver.find_element(By.XPATH, link_xpath).click()
+            link_clicked = True
+        except:
+            # 안 되면 다시 프레임 뒤지기
             driver.switch_to.default_content()
-            try:
-                link_xpath = f"//a[contains(text(), '{target_hsk}')]"
-                driver.find_element(By.XPATH, link_xpath).click()
-                link_clicked = True
-            except:
-                pass
-
+            iframes = driver.find_elements(By.TAG_NAME, "iframe")
+            for frame in iframes:
+                try:
+                    driver.switch_to.default_content()
+                    driver.switch_to.frame(frame)
+                    driver.find_element(By.XPATH, f"//a[contains(text(), '{target_hsk}')]").click()
+                    link_clicked = True
+                    break
+                except:
+                    pass
+        
         if not link_clicked:
-            status.error("❌ 결과 링크를 클릭하지 못했습니다. (TAB 입력이 빗나갔거나 조회가 안됨)")
-            st.image(driver.get_screenshot_as_png()) # 화면 확인
+            status.error("❌ 결과 링크를 찾지 못했습니다. (TAB 입력 실패 또는 데이터 없음)")
+            st.image(driver.get_screenshot_as_png())
             return None
-            
+
         time.sleep(5) # 팝업 로딩
 
         # 새 창 전환
         if len(driver.window_handles) > 1:
             driver.switch_to.window(driver.window_handles[-1])
 
-        # [단계 4] 데이터 추출 (당월/전월)
-        status.write("⏳ 상세 데이터 분석 중...")
+        # [단계 5] 데이터 추출
+        status.write("⏳ 데이터 추출 중...")
 
         now = datetime.now()
         cur_year = str(now.year)
@@ -154,7 +163,7 @@ def run_crawler(target_hsk):
             y = t['year']
             m = t['month']
             
-            # 연도 클릭
+            # 연도 클릭 (있으면)
             try:
                 driver.find_element(By.XPATH, f"//*[contains(text(), '{y}')]").click()
                 time.sleep(2)
@@ -171,10 +180,11 @@ def run_crawler(target_hsk):
                 if found: break
                 for idx, row in df.iterrows():
                     row_txt = " ".join(row.astype(str).values)
+                    # "01월" or "2026.01" 패턴 찾기
                     if f"{int(m)}월" in row_txt or f"{y}.{m}" in row_txt:
                         if '수출금액' in df.columns: val = row['수출금액']
                         elif '수출' in df.columns: val = row['수출']
-                        else: val = row_txt
+                        else: val = row_txt # 컬럼 못 찾으면 행 전체
                         found = True
                         break
             
