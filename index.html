@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>K-Stat 무역통계 수집기</title>
+    <style>
+        body {
+            font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+            background-color: #f0f2f6;
+            display: flex;
+            justify_content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background-color: white;
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            text-align: center;
+            max-width: 500px;
+            width: 90%;
+        }
+        h1 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        p {
+            color: #7f8c8d;
+            line-height: 1.6;
+            margin-bottom: 30px;
+        }
+        .btn {
+            background-color: #ff4b4b; /* Streamlit 메인 컬러 */
+            color: white;
+            padding: 15px 30px;
+            text-decoration: none;
+            font-size: 18px;
+            font-weight: bold;
+            border-radius: 8px;
+            transition: background-color 0.3s;
+            display: inline-block;
+        }
+        .btn:hover {
+            background-color: #d43b3b;
+        }
+        .status-badge {
+            display: inline-block;
+            background-color: #e1f5fe;
+            color: #0288d1;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <span class="status-badge">● GitHub Pages 정상 작동 중</span>
+        <h1>🚢 K-Stat 데이터 수집기</h1>
+        <p>
+            이 페이지는 무역 통계 크롤링 프로그램을 실행하기 위한<br>
+            <b>시작 페이지</b>입니다.<br><br>
+            아래 버튼을 누르면 파이썬 엔진이 있는<br>
+            서버로 이동하여 크롤링을 시작합니다.
+        </p>
+        
+        <a href="https://share.streamlit.io/" target="_blank" class="btn">
+            🚀 프로그램 실행하기
+        </a>
+    </div>
+
+</body>
+</html>
