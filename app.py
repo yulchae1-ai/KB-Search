@@ -15,8 +15,8 @@ import io
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
 st.set_page_config(page_title="K-STAT 무역통계 수집기", layout="centered")
-st.title("🚢 K-STAT 키보드 제어 모드")
-st.info("Iframe 내부를 자동으로 탐색하여 TAB 키로 데이터를 조회합니다.")
+st.title("🚢 K-STAT 데이터 수집기 (한글폰트 Ver)")
+st.info("서버에 한글 폰트가 설치되어 있어야 정상 작동합니다.")
 
 # 입력 폼
 with st.form("input_form"):
@@ -63,8 +63,8 @@ def run_crawler(target_hsk):
         btn_2.click()
         time.sleep(3) 
 
-        # [단계 2] Iframe 탐색 및 '총괄' 클릭 (여기가 수정됨)
-        status.write("⏳ '총괄' 버튼이 있는 프레임 탐색 중...")
+        # [단계 2] Iframe 탐색 및 '총괄' 클릭
+        status.write("⏳ '총괄' 버튼 찾는 중...")
         
         # 1. 화면에 있는 모든 iframe을 찾음
         iframes = driver.find_elements(By.TAG_NAME, "iframe")
@@ -79,12 +79,11 @@ def run_crawler(target_hsk):
                 # 총괄 버튼이 보이나요?
                 if len(driver.find_elements(By.XPATH, "//*[contains(text(), '총괄')]")) > 0:
                     frame_found = True
-                    break # 찾았으면 거기 머무름
+                    break 
             except:
                 continue
         
         if not frame_found:
-            # 못 찾았으면 메인 화면에 있을 수도 있으니 메인으로 복귀
             driver.switch_to.default_content()
 
         # 3. '총괄' 버튼 클릭
@@ -93,7 +92,7 @@ def run_crawler(target_hsk):
         time.sleep(1)
         
         # [단계 3] TAB 키 네비게이션
-        status.write(f"⏳ HSK {target_hsk} 입력 시도 (TAB 4회)...")
+        status.write(f"⏳ HSK {target_hsk} 입력 (TAB 이동)...")
         
         actions.send_keys(Keys.TAB)
         actions.send_keys(Keys.TAB)
@@ -103,20 +102,17 @@ def run_crawler(target_hsk):
         actions.send_keys(Keys.ENTER)
         actions.perform()
         
-        time.sleep(5) # 조회 결과 로딩 대기
+        time.sleep(5) 
 
         # [단계 4] 상세 정보 클릭 (파란색 링크)
         status.write("⏳ 검색 결과(파란색 링크) 클릭...")
         
-        # 검색 결과는 보통 같은 프레임에 뜨지만, 혹시 모르니 다시 확인
         link_clicked = False
         try:
-            # 현재 프레임에서 시도
             link_xpath = f"//a[contains(text(), '{target_hsk}')]"
             driver.find_element(By.XPATH, link_xpath).click()
             link_clicked = True
         except:
-            # 안 되면 다시 프레임 뒤지기
             driver.switch_to.default_content()
             iframes = driver.find_elements(By.TAG_NAME, "iframe")
             for frame in iframes:
@@ -130,13 +126,12 @@ def run_crawler(target_hsk):
                     pass
         
         if not link_clicked:
-            status.error("❌ 결과 링크를 찾지 못했습니다. (TAB 입력 실패 또는 데이터 없음)")
+            status.error("❌ 결과 링크를 찾지 못했습니다. (폰트 문제 해결 후 다시 시도하세요)")
             st.image(driver.get_screenshot_as_png())
             return None
 
-        time.sleep(5) # 팝업 로딩
+        time.sleep(5) 
 
-        # 새 창 전환
         if len(driver.window_handles) > 1:
             driver.switch_to.window(driver.window_handles[-1])
 
@@ -163,7 +158,6 @@ def run_crawler(target_hsk):
             y = t['year']
             m = t['month']
             
-            # 연도 클릭 (있으면)
             try:
                 driver.find_element(By.XPATH, f"//*[contains(text(), '{y}')]").click()
                 time.sleep(2)
@@ -174,17 +168,15 @@ def run_crawler(target_hsk):
             dfs = pd.read_html(html)
             val = "데이터 없음"
             
-            # 표 데이터 찾기
             found = False
             for df in dfs:
                 if found: break
                 for idx, row in df.iterrows():
                     row_txt = " ".join(row.astype(str).values)
-                    # "01월" or "2026.01" 패턴 찾기
                     if f"{int(m)}월" in row_txt or f"{y}.{m}" in row_txt:
                         if '수출금액' in df.columns: val = row['수출금액']
                         elif '수출' in df.columns: val = row['수출']
-                        else: val = row_txt # 컬럼 못 찾으면 행 전체
+                        else: val = row_txt 
                         found = True
                         break
             
@@ -202,9 +194,6 @@ def run_crawler(target_hsk):
     
     return pd.DataFrame(results)
 
-# --------------------------------------------------------------------------
-# 3. 실행
-# --------------------------------------------------------------------------
 if submit:
     df_res = run_crawler(hsk_code)
     
