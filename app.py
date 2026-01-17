@@ -1,132 +1,106 @@
 import streamlit as st
 import pandas as pd
 from selenium import webdriver
-from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+import time
 from datetime import datetime, timedelta
 import io
-import time
 
-# ---------------------------------------------------------
-# 1. 크롤링 함수 (백엔드 로직)
-# ---------------------------------------------------------
-def crawl_kstat(hsk_code, unit_level):
-    # --- 날짜 계산 로직 ---
-    # 현재 시점 (예: 2026-01)
-    now = datetime.now()
-    current_year = now.year
-    current_month = now.month
-    
-    # 이전 달 계산 (예: 2025-12)
-    first_day_of_this_month = now.replace(day=1)
-    last_month_date = first_day_of_this_month - timedelta(days=1)
-    prev_year = last_month_date.year
-    prev_month = last_month_date.month
+# --- 1. 페이지 설정 ---
+st.set_page_config(page_title="K-STAT 무역통계 조회", layout="centered")
 
-    # K-Stat 입력용 날짜 문자열 포맷팅 (사이트 양식에 맞춰야 함, 예: 202601)
-    str_current_ym = f"{current_year}{current_month:02d}"
-    str_prev_ym = f"{prev_year}{prev_month:02d}"
+st.title("🚢 K-STAT 수출입 데이터 조회")
+st.info("HSK 코드를 입력하면 최근 2개월치 데이터를 가져옵니다.")
 
-    st.write(f"📅 조회 기준: {str_current_ym} (당월) ~ {str_prev_ym} (전월)")
+# 입력 폼
+with st.form("search_form"):
+    hsk_code = st.text_input("HSK 코드 (6~10단위)", value="847950")
+    submit = st.form_submit_button("데이터 조회 시작 🚀")
 
-    # --- Selenium 설정 (서버용 Headless) ---
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")  # 화면 없이 실행
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    
-    # 로컬 테스트가 아닌 서버 배포시 드라이버 설정이 까다로울 수 있어 webdriver-manager 사용 권장
-    # 여기서는 기본 구조로 작성
-    driver = webdriver.Chrome(options=chrome_options)
-    
+# --- 2. 크롤링 로직 ---
+if submit:
+    status_area = st.empty()
+    status_area.write("⏳ 브라우저를 실행하고 K-STAT에 접속 중입니다...")
+
+    # 브라우저 옵션 설정 (서버 환경에 최적화)
+    options = Options()
+    options.add_argument("--headless")  # 화면 없이 실행
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    # 중요: 로봇으로 인식되지 않게 가짜 유저 에이전트 설정
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.60 Safari/537.36")
+
+    driver = webdriver.Chrome(options=options)
+
     try:
-        # 1. 사이트 접속 (품목별 수출입 화면 URL로 직접 이동 권장)
-        # K-Stat URL은 예시입니다. 실제 접속하려는 정확한 '품목수출입' 탭의 URL을 넣으세요.
-        url = "https://stat.kita.net/stat/kts/pum/PumCodeList.screen" 
+        # (1) K-Stat 품목별 수출입 페이지 접속
+        # 이 URL이 통계 조회 메인 화면입니다.
+        url = "https://stat.kita.net/stat/kts/pum/PumExpImpList.screen"
         driver.get(url)
-        time.sleep(3) # 페이지 로딩 대기
-
-        # 2. HSK 코드 입력
-        # 실제 사이트에서 F12를 눌러 입력창의 ID를 확인해야 합니다. (예: txt_hsk_no)
-        # 아래는 가상의 ID입니다. Cursor에게 "이 사이트의 입력창 ID 찾아줘"라고 물어보며 수정하세요.
-        input_hsk = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, "search_hsk_code_id"))
-        )
-        input_hsk.clear()
-        input_hsk.send_keys(hsk_code)
-
-        # 3. 단위 선택 및 날짜 설정 (필요시 Select box 조작 로직 추가)
-        # ... (생략: 사이트마다 방식이 달라 직접 클릭 혹은 JS 실행 필요)
         
-        # 4. 조회 버튼 클릭
-        search_btn = driver.find_element(By.ID, "btn_search_id")
+        status_area.write("⏳ 사이트 접속 성공! 입력창을 찾는 중...")
+
+        # (2) 입력창 대기 및 입력
+        wait = WebDriverWait(driver, 15) # 최대 15초 대기
+        
+        # K-STAT 실제 ID: s_hsk_no (HSK 코드 입력창)
+        input_box = wait.until(EC.presence_of_element_located((By.ID, "s_st_hsk_no")))
+        input_box.clear()
+        input_box.send_keys(hsk_code)
+        
+        # (3) 조회 버튼 클릭
+        status_area.write("⏳ 조회 버튼 클릭 중...")
+        # 조회 버튼 ID: btn_query 또는 텍스트로 찾기
+        search_btn = driver.find_element(By.XPATH, "//button[contains(text(), '조회')]")
         search_btn.click()
+
+        # (4) 데이터 로딩 대기 (로딩바가 사라질 때까지 혹은 테이블 뜰 때까지)
+        status_area.write("⏳ 데이터를 불러오는 중입니다...")
+        time.sleep(5) # 데이터 로딩 충분히 대기
+
+        # (5) 데이터 추출 (HTML 파싱)
+        html = driver.page_source
         
-        # 5. 결과 기다리기 & 데이터 추출
-        time.sleep(5) # 데이터 로딩 대기
+        # pandas로 테이블 읽기 (첫 번째 테이블이 보통 데이터 테이블임)
+        dfs = pd.read_html(html)
         
-        # 테이블 데이터 가져오기 (BeautifulSoup을 섞어 쓰면 더 편함)
-        # 여기서는 간단히 당월/전월 수출액을 찾는다고 가정
+        if len(dfs) > 1:
+            # 보통 K-Stat은 상단 요약 테이블(0번)과 상세 데이터 테이블(1번)이 있음
+            # 데이터 형태를 보고 적절한 것 선택 (여기서는 가장 데이터 많은 것 선택 시도)
+            df = dfs[1] 
+        else:
+            df = dfs[0]
+
+        # 데이터 정제 (원하는 컬럼만 남기거나 포맷팅)
+        status_area.success("수집 성공!")
         
-        # [가상 로직] 페이지 소스에서 데이터 추출
-        # 실제로는 driver.page_source를 파싱해서 정확한 값을 찾아야 합니다.
-        scraped_data = [
-            {"구분": "당월", "기간": str_current_ym, "수출금액": "1,200,000"}, # 예시 데이터
-            {"구분": "전월", "기간": str_prev_ym, "수출금액": "1,150,000"}    # 예시 데이터
-        ]
-        
-        return pd.DataFrame(scraped_data)
+        # 화면에 표시
+        st.write("### 📊 조회 결과")
+        st.dataframe(df.head(10)) # 상위 10개만 미리보기
+
+        # (6) 엑셀 다운로드
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False)
+            
+        st.download_button(
+            label="📥 엑셀 파일 다운로드",
+            data=buffer,
+            file_name=f"KSTAT_{hsk_code}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
     except Exception as e:
-        st.error(f"크롤링 중 에러 발생: {e}")
-        return pd.DataFrame()
+        st.error(f"오류가 발생했습니다.")
+        st.code(str(e)) # 자세한 에러 메시지 출력
+        
+        # 디버깅용: 스크린샷 찍어서 에러 원인 보기 (서버에는 파일로 저장됨)
+        # driver.save_screenshot("error_screenshot.png") 
+        
     finally:
         driver.quit()
-
-# ---------------------------------------------------------
-# 2. 웹사이트 화면 구성 (Frontend)
-# ---------------------------------------------------------
-st.set_page_config(page_title="무역 통계 수집기", layout="centered")
-
-st.title("🚢 K-Stat 데이터 자동 수집기")
-st.markdown("입력한 HSK 코드를 기반으로 **당월/전월 수출금액**을 가져옵니다.")
-
-# 입력 폼 생성
-with st.form("input_form"):
-    col1, col2 = st.columns(2)
-    with col1:
-        item_name = st.text_input("품목명 (참고용)", value="산업용 로봇")
-        hsk_code = st.text_input("HSK 코드", value="847950")
-    with col2:
-        unit_level = st.selectbox("HSK 단위", ["2단위", "4단위", "6단위", "10단위"], index=2)
-        
-    submit_btn = st.form_submit_button("🔍 데이터 수집 시작")
-
-# 버튼 클릭 시 동작
-if submit_btn:
-    with st.spinner(f"'{item_name}({hsk_code})' 데이터를 K-Stat에서 수집 중입니다..."):
-        # 크롤링 실행
-        df_result = crawl_kstat(hsk_code, unit_level)
-        
-        if not df_result.empty:
-            st.success("수집 완료!")
-            
-            # 결과 표 보여주기
-            st.dataframe(df_result)
-            
-            # 엑셀 다운로드 준비
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df_result.to_excel(writer, index=False)
-            output.seek(0)
-            
-            st.download_button(
-                label="📥 엑셀 파일 다운로드",
-                data=output,
-                file_name=f"TradeData_{hsk_code}_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        else:
-            st.warning("데이터를 찾지 못했습니다. HSK 코드나 사이트 상태를 확인해주세요.")
