@@ -55,4 +55,5 @@ def run_crawler(target_hsk):
         driver.get("https://stat.kita.net/")
         
         # '국내통계' 클릭
-        btn_1 = wait.until(EC.element_to_
+        btn_1 = wait.until(EC.element_to_)
+
