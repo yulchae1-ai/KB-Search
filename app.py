@@ -15,8 +15,8 @@ import io
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
 st.set_page_config(page_title="K-STAT 무역통계 수집기", layout="centered")
-st.title("🚢 K-STAT 데이터 수집기 (강제클릭 Ver)")
-st.info("한글 폰트 적용 완료. 자바스크립트 강제 클릭으로 조회합니다.")
+st.title("🚢 K-STAT 데이터 수집기 (TAB 네비게이션)")
+st.info("Iframe 내부로 정확히 진입하여 '총괄' 탭 클릭 후 TAB 키로 이동합니다.")
 
 # 입력 폼
 with st.form("input_form"):
@@ -38,6 +38,7 @@ def run_crawler(target_hsk):
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
     
+    # 한글 폰트 미설치시에도 동작하도록 User-Agent 설정
     ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
     options.add_argument(f"user-agent={ua}")
 
@@ -58,7 +59,7 @@ def run_crawler(target_hsk):
             btn_1 = driver.find_element(By.XPATH, "//*[contains(text(), '국내통계')]")
             driver.execute_script("arguments[0].click();", btn_1)
         except:
-            pass # 이미 열려있거나 못 찾으면 패스
+            pass 
         time.sleep(1)
 
         # '품목 수출입' 클릭 (JS 강제 클릭)
@@ -69,51 +70,63 @@ def run_crawler(target_hsk):
             status.warning("메뉴 이동 중 문제 발생, 계속 진행합니다.")
         time.sleep(3) 
 
-        # [단계 2] Iframe 탐색 및 '총괄' 클릭
-        status.write("⏳ '총괄' 버튼 찾는 중...")
+        # [단계 2] '총괄' 탭이 있는 올바른 Iframe 찾기 (가장 중요!)
+        status.write("⏳ 데이터 입력 화면(Iframe) 진입 시도...")
         
-        # 1. 화면에 있는 모든 iframe을 찾음
+        # 화면상의 모든 iframe 수집
         iframes = driver.find_elements(By.TAG_NAME, "iframe")
-        frame_found = False
+        target_iframe_index = -1
         
-        # 2. 하나씩 들어가서 '총괄' 버튼이 있는지 확인
-        for i in range(len(iframes)):
+        # '시작코드'라는 텍스트가 있는 iframe을 찾음 (이게 진짜임)
+        for i, iframe in enumerate(iframes):
             try:
-                driver.switch_to.default_content() # 초기화
-                driver.switch_to.frame(iframes[i]) # 프레임 진입
-                
-                # 총괄 버튼이 보이나요? (클릭 가능 여부 상관없이 존재만 확인)
+                driver.switch_to.default_content()
+                driver.switch_to.frame(iframe)
+                # '시작코드' 혹은 '총괄' 텍스트가 있는지 확인
+                if len(driver.find_elements(By.XPATH, "//*[contains(text(), '시작코드')]")) > 0:
+                    target_iframe_index = i
+                    break
                 if len(driver.find_elements(By.XPATH, "//*[contains(text(), '총괄')]")) > 0:
-                    frame_found = True
-                    break 
+                    target_iframe_index = i
+                    break
             except:
                 continue
         
-        if not frame_found:
+        # 찾은 iframe으로 최종 진입
+        if target_iframe_index != -1:
             driver.switch_to.default_content()
+            driver.switch_to.frame(iframes[target_iframe_index])
+            status.write("✅ 올바른 입력 화면(Iframe)을 찾았습니다!")
+        else:
+            # 못 찾았으면 메인 프레임에서 시도
+            driver.switch_to.default_content()
+            status.warning("⚠️ Iframe을 특정하지 못해 메인 화면에서 시도합니다.")
 
-        # 3. '총괄' 버튼 클릭 (JS 강제 클릭 사용)
+        # [단계 3] '총괄' 클릭 및 TAB 이동
+        status.write("⏳ '총괄' 클릭 후 TAB 4회 입력...")
+        
+        # '총괄' 버튼 찾기
         try:
-            summary_tab = driver.find_element(By.XPATH, "//*[contains(text(), '총괄')]")
-            # ★ 핵심: 화면 가림 무시하고 자바스크립트로 눌러버리기
+            summary_tab = wait.until(EC.presence_of_element_located((By.XPATH, "//*[contains(text(), '총괄')]")))
+            # JS로 강제 클릭 (포커스 잡기)
             driver.execute_script("arguments[0].click();", summary_tab)
-            status.write("✅ '총괄' 탭 강제 클릭 성공")
+            time.sleep(1)
+            
+            # 여기서부터 TAB 4번
+            actions.send_keys(Keys.TAB)
+            actions.send_keys(Keys.TAB)
+            actions.send_keys(Keys.TAB)
+            actions.send_keys(Keys.TAB)
+            actions.send_keys(target_hsk)
+            actions.send_keys(Keys.ENTER)
+            actions.perform()
+            
+            status.write(f"⏳ HSK {target_hsk} 입력 완료. 결과 대기...")
+            
         except Exception as e:
-            status.warning(f"'총괄' 탭 클릭 실패 (이미 활성화 되었을 수 있음): {e}")
-        
-        time.sleep(1)
-        
-        # [단계 3] TAB 키 네비게이션
-        status.write(f"⏳ HSK {target_hsk} 입력 (TAB 이동)...")
-        
-        # 총괄 탭을 한 번 더 포커스(클릭) 하고 시작
-        actions.send_keys(Keys.TAB)
-        actions.send_keys(Keys.TAB)
-        actions.send_keys(Keys.TAB)
-        actions.send_keys(Keys.TAB)
-        actions.send_keys(target_hsk)
-        actions.send_keys(Keys.ENTER)
-        actions.perform()
+            status.error(f"❌ '총괄' 버튼을 찾거나 클릭하는 데 실패했습니다: {e}")
+            st.image(driver.get_screenshot_as_png())
+            return None
         
         time.sleep(5) 
 
@@ -121,36 +134,20 @@ def run_crawler(target_hsk):
         status.write("⏳ 검색 결과(파란색 링크) 클릭...")
         
         link_clicked = False
-        
-        # 현재 프레임에서 링크 찾기 시도
         try:
+            # 현재 프레임에서 링크 찾기
             link_xpath = f"//a[contains(text(), '{target_hsk}')]"
-            link_element = driver.find_element(By.XPATH, link_xpath)
-            driver.execute_script("arguments[0].click();", link_element) # 강제 클릭
+            link_element = wait.until(EC.presence_of_element_located((By.XPATH, link_xpath)))
+            driver.execute_script("arguments[0].click();", link_element)
             link_clicked = True
         except:
-            # 안 되면 다시 iframe 뒤지기
-            driver.switch_to.default_content()
-            iframes = driver.find_elements(By.TAG_NAME, "iframe")
-            for frame in iframes:
-                try:
-                    driver.switch_to.default_content()
-                    driver.switch_to.frame(frame)
-                    link_element = driver.find_element(By.XPATH, f"//a[contains(text(), '{target_hsk}')]")
-                    driver.execute_script("arguments[0].click();", link_element) # 강제 클릭
-                    link_clicked = True
-                    break
-                except:
-                    pass
-        
-        if not link_clicked:
-            status.error("❌ 결과 링크를 찾지 못했습니다.")
+            status.error("❌ 결과 링크(파란색 글씨)를 찾지 못했습니다. 입력이 제대로 안 되었을 수 있습니다.")
             st.image(driver.get_screenshot_as_png())
             return None
 
         time.sleep(5) 
 
-        # 새 창 전환
+        # 새 창 전환 (팝업)
         if len(driver.window_handles) > 1:
             driver.switch_to.window(driver.window_handles[-1])
 
@@ -177,8 +174,8 @@ def run_crawler(target_hsk):
             y = t['year']
             m = t['month']
             
+            # 연도 버튼 클릭 (JS 강제 클릭)
             try:
-                # 연도 버튼도 강제 클릭
                 year_btn = driver.find_element(By.XPATH, f"//*[contains(text(), '{y}')]")
                 driver.execute_script("arguments[0].click();", year_btn)
                 time.sleep(2)
@@ -194,6 +191,7 @@ def run_crawler(target_hsk):
                 if found: break
                 for idx, row in df.iterrows():
                     row_txt = " ".join(row.astype(str).values)
+                    # 날짜 패턴 확인
                     if f"{int(m)}월" in row_txt or f"{y}.{m}" in row_txt:
                         if '수출금액' in df.columns: val = row['수출금액']
                         elif '수출' in df.columns: val = row['수출']
