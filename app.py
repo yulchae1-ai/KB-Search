@@ -8,13 +8,14 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.keys import Keys
 import time
+from datetime import datetime
 
 # --------------------------------------------------------------------------
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
-st.set_page_config(page_title="K-STAT 무역통계 끝장판", layout="centered")
-st.title("🚢 K-STAT 데이터 핀셋 추출기")
-st.info("HSK 입력 -> 매크로 이동 -> '12월' 옆에 있는 숫자 바로 가져오기")
+st.set_page_config(page_title="K-STAT 무역통계 수집기", layout="centered")
+st.title("🚢 K-STAT 키보드 정밀 타격")
+st.info("HSK 입력 -> 키보드 화살표 이동(DOWN/RIGHT) -> 데이터 낚아채기")
 
 # 입력 폼
 with st.form("input_form"):
@@ -22,44 +23,56 @@ with st.form("input_form"):
     submit = st.form_submit_button("데이터 수집 시작 🚀")
 
 # --------------------------------------------------------------------------
-# 2. 핀셋 추출 함수 (핵심: 글자 옆에 있는 칸 찾기)
+# 2. 키보드 네비게이션 함수 (핵심: DOWN N번 -> RIGHT 1번)
 # --------------------------------------------------------------------------
-def extract_neighbor_data(driver, year, month_text):
+def get_data_by_arrow_keys(driver, year, month_int):
     """
-    1. '2025년'을 클릭해서 펼친다.
-    2. '12월' 글자가 보이면, 바로 옆(다음) 칸에 있는 데이터를 가져온다.
+    1. 해당 연도(year) 텍스트를 클릭 (트리 펼치기 & 포커스 잡기)
+    2. 월 숫자만큼 DOWN 키 입력 (1월=1번, 12월=12번)
+    3. RIGHT 키 1번 입력 (수출금액 칸으로 이동)
+    4. 현재 포커스된 요소의 텍스트 추출
     """
     try:
-        # [1] 연도 클릭 (2025년 등)
-        # 이미 펼쳐져 있을 수도 있으니 try-except로 시도
+        # [1] 연도 클릭 (포커스 시작점)
         try:
             xpath_year = f"//*[contains(text(), '{year}년')]"
             year_elem = driver.find_element(By.XPATH, xpath_year)
+            # 확실하게 클릭해서 포커스를 둡니다
             driver.execute_script("arguments[0].click();", year_elem)
-            time.sleep(2) # 데이터 로딩 대기
+            time.sleep(1) # 펼쳐지는 시간 대기
         except:
-            pass # 못 찾으면 이미 펼쳐져 있거나 데이터가 없는 것
+            return "연도 없음"
 
-        # [2] '12월' 옆집 데이터 찾기 (XPath의 following-sibling 기능)
-        # 해석: 텍스트가 '12월'인 td 태그를 찾고 -> 그 뒤에 오는 첫번째 td 태그를 가져와라.
-        xpath_target = f"//td[contains(text(), '{month_text}')]/following-sibling::td[1]"
+        # [2] 화살표 이동 매크로
+        actions = ActionChains(driver)
         
-        # 화면에 보이는 요소가 나올 때까지 대기
-        wait = WebDriverWait(driver, 5)
-        target_elem = wait.until(EC.visibility_of_element_located((By.XPATH, xpath_target)))
+        # (A) DOWN 키: 월 숫자만큼 반복
+        # 예: 1월 -> 1번, 12월 -> 12번
+        for _ in range(month_int):
+            actions.send_keys(Keys.DOWN)
         
-        value = target_elem.text.strip()
+        # (B) RIGHT 키: 1번 (금액 칸으로 이동)
+        actions.send_keys(Keys.RIGHT)
         
-        if value:
-            return value
+        # 액션 실행
+        actions.perform()
+        time.sleep(0.5) # 커서 이동 대기
+
+        # [3] 현재 포커스 잡힌 데이터 가져오기 (핵심!)
+        # switch_to.active_element는 현재 커서가 깜빡이는 곳의 정보를 가져옵니다.
+        active_element = driver.switch_to.active_element
+        result_text = active_element.text.strip()
+
+        if result_text:
+            return result_text
         else:
             return "빈 값"
 
     except Exception as e:
-        return f"찾지 못함 ({month_text})"
+        return f"에러: {str(e)}"
 
 # --------------------------------------------------------------------------
-# 3. 크롤링 메인 함수
+# 3. 메인 크롤링 함수
 # --------------------------------------------------------------------------
 def run_crawler(target_hsk):
     status = st.empty()
@@ -93,7 +106,6 @@ def run_crawler(target_hsk):
             btn1 = driver.find_element(By.XPATH, "//*[contains(text(), '국내통계')]")
             driver.execute_script("arguments[0].click();", btn1)
             time.sleep(1)
-            
             btn2 = wait.until(EC.presence_of_element_located((By.XPATH, "//*[contains(text(), '품목 수출입') or contains(text(), '품목수출입')]")))
             driver.execute_script("arguments[0].click();", btn2)
             time.sleep(3)
@@ -116,26 +128,28 @@ def run_crawler(target_hsk):
                 continue
         if not found_frame: driver.switch_to.default_content()
 
-        # [3] 매크로 실행 (HSK -> TAB... -> 조회 -> TAB... -> 상세)
-        status.write(f"⏳ 매크로 실행 중...")
-        
+        # [3] 초기 매크로 (HSK 조회)
+        status.write(f"⏳ 조회 매크로 실행 중...")
         try:
             hsk_label = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'HSK')]")))
             hsk_label.click()
             time.sleep(1) 
             
+            # HSK 입력
             actions.send_keys(Keys.TAB)
             actions.send_keys(Keys.TAB)
             actions.send_keys(target_hsk)
             actions.perform()
             time.sleep(0.5)
 
+            # 조회 (TAB 11 -> ENTER)
             status.write("⏳ 조회 (TAB 11회)...")
             for _ in range(11): actions.send_keys(Keys.TAB)
             actions.send_keys(Keys.ENTER)
             actions.perform()
             time.sleep(5) 
 
+            # 상세 진입 (TAB 8 -> DOWN -> ENTER)
             status.write("⏳ 상세 진입 (TAB 8회)...")
             actions = ActionChains(driver) 
             for _ in range(8): actions.send_keys(Keys.TAB)
@@ -151,22 +165,35 @@ def run_crawler(target_hsk):
         # [4] 팝업 창 전환
         if len(driver.window_handles) > 1:
             driver.switch_to.window(driver.window_handles[-1])
-            status.write("✅ 팝업창에서 데이터 핀셋 추출 시작!")
+            status.write("✅ 팝업창에서 키보드 정밀 타격 시작!")
         else:
             status.warning("⚠️ 팝업창 없음")
             return None
 
-        # [5] 데이터 정밀 추출 (옆집 데이터 가져오기)
+        # [5] 화살표 이동으로 데이터 추출 (사용자 요청 로직)
         
-        # 1. 2026년 1월
-        status.write("👉 2026년 1월 데이터 찾는 중...")
-        val_2026 = extract_neighbor_data(driver, "2026", "1월")
-        results.append({"연도": "2026", "월": "1월", "수출금액": val_2026})
+        now = datetime.now()
+        # 현재: 2026-01 (예시)
+        cur_year = now.year
+        cur_month = now.month
         
-        # 2. 2025년 12월
-        status.write("👉 2025년 12월 데이터 찾는 중...")
-        val_2025 = extract_neighbor_data(driver, "2025", "12월")
-        results.append({"연도": "2025", "월": "12월", "수출금액": val_2025})
+        # 전월 계산
+        if cur_month == 1:
+            prev_year = cur_year - 1
+            prev_month = 12
+        else:
+            prev_year = cur_year
+            prev_month = cur_month - 1
+
+        # 1. 당월 데이터 (예: 2026년 1월 -> Click 2026, DOWN 1, RIGHT 1)
+        status.write(f"👉 {cur_year}년 {cur_month}월 데이터 위치로 이동 중...")
+        val_curr = get_data_by_arrow_keys(driver, cur_year, cur_month)
+        results.append({"연도": str(cur_year), "월": f"{cur_month}월", "수출금액": val_curr})
+        
+        # 2. 전월 데이터 (예: 2025년 12월 -> Click 2025, DOWN 12, RIGHT 1)
+        status.write(f"👉 {prev_year}년 {prev_month}월 데이터 위치로 이동 중...")
+        val_prev = get_data_by_arrow_keys(driver, prev_year, prev_month)
+        results.append({"연도": str(prev_year), "월": f"{prev_month}월", "수출금액": val_prev})
 
     except Exception as e:
         st.error(f"오류: {e}")
@@ -183,5 +210,5 @@ if submit:
     
     if df_result is not None:
         st.success("🎉 추출 성공!")
-        st.write("### 📊 결과 확인")
+        st.write("### 📊 키보드 추출 결과")
         st.dataframe(df_result, use_container_width=True)
