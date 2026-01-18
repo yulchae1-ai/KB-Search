@@ -12,9 +12,9 @@ import time
 # --------------------------------------------------------------------------
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
-st.set_page_config(page_title="K-STAT 동적 수집기", layout="centered")
-st.title("🚢 K-STAT 동적 데이터 수집기 (Explicit Wait)")
-st.info("TAB 이동 후, 데이터가 화면에 채워질 때까지 명시적으로 기다립니다.")
+st.set_page_config(page_title="K-STAT 강력 수집기", layout="centered")
+st.title("🚢 K-STAT 데이터 수집기 (Robust Wait)")
+st.info("TAB 이동 후, Text / Value / InnerText 모든 속성을 뒤져서 데이터를 찾아냅니다.")
 
 # 입력 폼
 with st.form("input_form"):
@@ -22,33 +22,42 @@ with st.form("input_form"):
     submit = st.form_submit_button("데이터 수집 시작 🚀")
 
 # --------------------------------------------------------------------------
-# 2. 핵심 함수: 데이터가 찰 때까지 기다리기 (블로그 원리 적용)
+# 2. 핵심 함수: 모든 속성 뒤져서 데이터 나오면 리턴
 # --------------------------------------------------------------------------
-def wait_and_get_text(driver, timeout=10):
+def wait_and_extract_any_data(driver, timeout=10):
     """
-    현재 포커스된 요소(active_element)에 글자가 생길 때까지 기다립니다.
-    빈 값이면 0.5초 뒤에 다시 확인합니다.
+    현재 포커스된 요소(active_element)에서
+    Text, Value, innerText 중 하나라도 데이터가 있으면 가져옵니다.
     """
     end_time = time.time() + timeout
-    last_text = ""
     
     while time.time() < end_time:
         try:
-            # 1. 현재 커서가 있는 요소 가져오기
             elem = driver.switch_to.active_element
             
-            # 2. 텍스트 추출 (JS 사용이 가장 확실함)
-            text = driver.execute_script("return arguments[0].innerText || arguments[0].value;", elem)
+            # 1. 일반 텍스트 확인
+            txt = elem.text.strip()
+            if txt: return txt
             
-            if text and text.strip():
-                return text.strip()
+            # 2. 입력값(Value) 확인 (input 태그일 경우)
+            val = elem.get_attribute("value")
+            if val and val.strip(): return val.strip()
             
-            # 3. 빈 값이면 잠시 대기 (동적 로딩 중)
+            # 3. 숨겨진 텍스트(innerText) 확인 (div/span 등)
+            inner = elem.get_attribute("innerText")
+            if inner and inner.strip(): return inner.strip()
+            
+            # 4. JavaScript로 강제 추출 (최후의 수단)
+            js_txt = driver.execute_script("return arguments[0].textContent", elem)
+            if js_txt and js_txt.strip(): return js_txt.strip()
+            
+            # 데이터 없으면 0.5초 대기
             time.sleep(0.5)
+            
         except:
             time.sleep(0.5)
             
-    return "(데이터 로딩 실패)"
+    return "(데이터 없음)"
 
 # --------------------------------------------------------------------------
 # 3. 크롤링 메인 함수
@@ -129,12 +138,12 @@ def run_crawler(target_hsk):
             actions.send_keys(Keys.ENTER)
             actions.perform()
             
-            # ★ 동적 로딩 대기 (블로그 팁: 충분히 기다림)
+            # ★ 동적 로딩 대기
             status.write("⏳ 데이터 렌더링 대기 (8초)...")
             time.sleep(8) 
             
             # -------------------------------------------------------
-            # [4] 데이터 추출 (사용자 정의 TAB 카운트 + Explicit Wait)
+            # [4] 데이터 추출 (TAB 이동 + 모든 속성 검사)
             # -------------------------------------------------------
             
             # (A) TAB 10번 이동 -> 첫 번째 데이터
@@ -143,10 +152,10 @@ def run_crawler(target_hsk):
             for _ in range(10):
                 actions.send_keys(Keys.TAB)
             actions.perform()
-            time.sleep(0.5) # 커서 안착 대기
+            time.sleep(1) # 커서 안착 대기
             
-            # ★ 핵심: 데이터가 찰 때까지 기다려서 가져옴
-            data_1 = wait_and_get_text(driver)
+            # ★ 핵심: 텍스트든 밸류든 뭐든 가져와!
+            data_1 = wait_and_extract_any_data(driver)
             status.write(f"✅ 첫 번째 데이터: {data_1}")
             
             # (B) TAB 5번 추가 이동 -> 두 번째 데이터
@@ -155,10 +164,10 @@ def run_crawler(target_hsk):
             for _ in range(5):
                 actions.send_keys(Keys.TAB)
             actions.perform()
-            time.sleep(0.5) # 커서 안착 대기
+            time.sleep(1) # 커서 안착 대기
             
-            # ★ 핵심: 데이터가 찰 때까지 기다려서 가져옴
-            data_2 = wait_and_get_text(driver)
+            # ★ 핵심: 텍스트든 밸류든 뭐든 가져와!
+            data_2 = wait_and_extract_any_data(driver)
             status.write(f"✅ 두 번째 데이터: {data_2}")
             
             # 결과 저장
