@@ -7,14 +7,15 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.keys import Keys
+from bs4 import BeautifulSoup  # ★ 핵심 도구: 소스코드 해부기
 import time
 
 # --------------------------------------------------------------------------
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
-st.set_page_config(page_title="K-STAT 동적 크롤러", layout="centered")
-st.title("🚢 K-STAT 동적 데이터 수집기 (Smart Wait)")
-st.info("공유해주신 블로그 원리를 적용하여, 데이터가 로딩될 때까지 스마트하게 기다립니다.")
+st.set_page_config(page_title="K-STAT 데이터 정밀 분석기", layout="centered")
+st.title("🚢 K-STAT 데이터 정밀 분석기 (BS4)")
+st.info("화면 동작(키보드) 대신, 페이지 소스(HTML)를 직접 분석하여 데이터를 추출합니다.")
 
 # 입력 폼
 with st.form("input_form"):
@@ -22,35 +23,42 @@ with st.form("input_form"):
     submit = st.form_submit_button("데이터 수집 시작 🚀")
 
 # --------------------------------------------------------------------------
-# 2. 핵심 함수: 데이터가 뜰 때까지 기다려서 가져오기
+# 2. 핵심 함수: BeautifulSoup을 이용한 데이터 정밀 타격
 # --------------------------------------------------------------------------
-def get_data_smart_wait(driver, timeout=10):
+def parse_data_from_html(page_source, year, month_keyword):
     """
-    현재 포커스된 요소에 텍스트가 채워질 때까지 기다렸다가 가져옵니다.
-    (동적 페이지 크롤링의 핵심: Loading 대기)
+    브라우저의 현재 화면(HTML)을 통째로 가져와서
+    BeautifulSoup으로 '연도'와 '월'에 맞는 숫자를 찾아냅니다.
     """
-    end_time = time.time() + timeout
+    soup = BeautifulSoup(page_source, 'html.parser')
     
-    while time.time() < end_time:
-        try:
-            # 1. JS로 현재 포커스된 요소의 텍스트 추출 (가장 확실함)
-            # innerText, textContent, value를 순차적으로 확인
-            text = driver.execute_script("""
-                var el = document.activeElement;
-                return el.innerText || el.textContent || el.value;
-            """)
+    # 1. K-STAT의 데이터 테이블 찾기 (보통 gridBody 등으로 되어 있음)
+    # 테이블 행(tr)을 모두 가져옵니다.
+    rows = soup.find_all('tr')
+    
+    target_amount = "찾지 못함"
+    
+    for row in rows:
+        text = row.get_text(strip=True)
+        
+        # 2. 해당 '월'(예: 12월)이 포함된 행인지 확인
+        if month_keyword in text:
+            # 3. 그 행의 모든 칸(td)을 가져옴
+            cols = row.find_all('td')
             
-            # 2. 데이터가 있으면 바로 반환 (공백 제거 후 확인)
-            if text and text.strip():
-                return text.strip()
-            
-            # 3. 없으면 0.5초 대기 후 재시도 (비동기 로딩 기다림)
-            time.sleep(0.5)
-            
-        except:
-            time.sleep(0.5)
-            
-    return "(데이터 없음 - 로딩 시간 초과)"
+            # 4. 칸을 순회하면서 '수출금액' 패턴(숫자와 콤마)을 찾음
+            for col in cols:
+                val = col.get_text(strip=True)
+                
+                # 조건: "12월" 글자가 아니고, 숫자와 콤마로만 구성된 데이터
+                # (수출금액은 보통 256,598 처럼 생겼으므로)
+                if val and val != month_keyword:
+                    # 콤마 제거 후 숫자인지 확인
+                    clean_val = val.replace(',', '').replace('.', '')
+                    if clean_val.isdigit():
+                        return val # 찾았다! (256,598)
+                        
+    return target_amount
 
 # --------------------------------------------------------------------------
 # 3. 크롤링 메인 함수
@@ -67,10 +75,8 @@ def run_crawler(target_hsk):
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
     
-    # User-Agent 설정 (블로그 팁 적용: 봇 차단 방지)
     ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
     options.add_argument(f"user-agent={ua}")
-    options.add_argument("--lang=ko_KR") # 한국어 설정
 
     driver = webdriver.Chrome(options=options)
     wait = WebDriverWait(driver, 20)
@@ -111,71 +117,87 @@ def run_crawler(target_hsk):
                 continue
         if not found_frame: driver.switch_to.default_content()
 
-        # [3] 조회 매크로 실행
-        status.write(f"⏳ HSK {target_hsk} 조회 중...")
-        
+        # [3] 조회 (매크로 사용)
+        status.write(f"⏳ 조회 실행 중...")
         try:
-            # HSK 클릭
             hsk_label = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'HSK')]")))
             hsk_label.click()
             time.sleep(1) 
             
-            # TAB 2번 -> 입력
+            # 입력
             actions.send_keys(Keys.TAB)
             actions.send_keys(Keys.TAB)
             actions.send_keys(target_hsk)
             actions.perform()
             time.sleep(0.5)
 
-            # TAB 11번 -> 엔터 (조회)
-            status.write("⏳ 조회 버튼 실행 (TAB 11회)...")
+            # 조회 (TAB 11 -> ENTER)
+            status.write("⏳ 조회 버튼 타격 (TAB 11회)...")
             for _ in range(11): actions.send_keys(Keys.TAB)
             actions.send_keys(Keys.ENTER)
             actions.perform()
             
-            # [중요] 동적 로딩 대기 (블로그 원리 적용)
-            status.write("⏳ 데이터 로딩 대기 중 (Smart Wait)...")
-            time.sleep(5) # 기본 대기
+            # ★ 데이터 로딩 대기 (충분히)
+            status.write("⏳ 데이터 집계 중 (8초 대기)...")
+            time.sleep(8) 
             
-            # -------------------------------------------------------
-            # [4] 데이터 추출 (사용자 정의 TAB 카운트 + 스마트 웨이트)
-            # -------------------------------------------------------
-            
-            # (A) TAB 10번 이동 -> 첫 번째 데이터
-            status.write("👉 TAB 10회 이동 -> 첫 번째 데이터 감지 중...")
+            # 상세 페이지 진입 (TAB 8 -> DOWN -> ENTER)
+            status.write("⏳ 상세 팝업 진입 시도...")
             actions = ActionChains(driver) 
-            for _ in range(10):
-                actions.send_keys(Keys.TAB)
+            for _ in range(8): actions.send_keys(Keys.TAB)
+            actions.send_keys(Keys.DOWN)
+            actions.send_keys(Keys.ENTER)
             actions.perform()
-            
-            # ★ 핵심: 데이터가 뜰 때까지 기다려서 가져옴
-            data_1 = get_data_smart_wait(driver)
-            status.write(f"✅ 첫 번째 값 획득: {data_1}")
-            
-            # (B) TAB 5번 추가 이동 -> 두 번째 데이터
-            status.write("👉 TAB 5회 이동 -> 두 번째 데이터 감지 중...")
-            actions = ActionChains(driver) 
-            for _ in range(5):
-                actions.send_keys(Keys.TAB)
-            actions.perform()
-            
-            # ★ 핵심: 데이터가 뜰 때까지 기다려서 가져옴
-            data_2 = get_data_smart_wait(driver)
-            status.write(f"✅ 두 번째 값 획득: {data_2}")
-            
-            # 결과 저장
-            results.append({
-                "구분": "첫 번째 데이터 (TAB 10)",
-                "값": data_1
-            })
-            results.append({
-                "구분": "두 번째 데이터 (+TAB 5)",
-                "값": data_2
-            })
-            
+            time.sleep(5)
+
         except Exception as e:
-            status.error(f"매크로 실패: {e}")
+            status.error(f"조회 실패: {e}")
             return None
+
+        # [4] 팝업 창 전환
+        if len(driver.window_handles) > 1:
+            driver.switch_to.window(driver.window_handles[-1])
+            status.write("✅ 팝업창 포착! 소스코드 분석 시작...")
+        else:
+            status.warning("⚠️ 팝업창 없음")
+            return None
+
+        # -------------------------------------------------------
+        # [5] 데이터 추출 (BeautifulSoup 사용)
+        # -------------------------------------------------------
+        
+        # 전략: 연도를 클릭해서 펼쳐야 HTML 안에 '월' 데이터가 생김.
+        # 따라서 2026년 클릭 -> 소스 가져오기 -> 2025년 클릭 -> 소스 가져오기
+        
+        # (A) 2026년 1월 데이터
+        status.write("👉 2026년 데이터 추출 중...")
+        try:
+            # 2026년 클릭 (데이터 펼치기)
+            year_btn = driver.find_element(By.XPATH, "//*[contains(text(), '2026년')]")
+            driver.execute_script("arguments[0].click();", year_btn)
+            time.sleep(2) # 펼쳐질 시간
+        except:
+            pass # 2026년이 없을 수도 있음
+            
+        # ★ 현재 화면의 HTML 소스를 통째로 긁어옴
+        html_2026 = driver.page_source
+        val_2026 = parse_data_from_html(html_2026, "2026", "1월")
+        results.append({"연도": "2026", "월": "1월", "수출금액": val_2026})
+        
+        # (B) 2025년 12월 데이터
+        status.write("👉 2025년 데이터 추출 중...")
+        try:
+            # 2025년 클릭 (데이터 펼치기)
+            year_btn = driver.find_element(By.XPATH, "//*[contains(text(), '2025년')]")
+            driver.execute_script("arguments[0].click();", year_btn)
+            time.sleep(2)
+        except:
+            pass
+            
+        # ★ 현재 화면의 HTML 소스를 통째로 긁어옴
+        html_2025 = driver.page_source
+        val_2025 = parse_data_from_html(html_2025, "2025", "12월")
+        results.append({"연도": "2025", "월": "12월", "수출금액": val_2025})
 
     except Exception as e:
         st.error(f"오류: {e}")
@@ -191,7 +213,6 @@ if submit:
     df_result = run_crawler(hsk_code)
     
     if df_result is not None:
-        st.success("🎉 동적 데이터 수집 완료!")
+        st.success("🎉 분석 완료!")
         st.write("### 📊 수집 결과")
         st.dataframe(df_result, use_container_width=True)
-        
