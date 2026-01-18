@@ -12,9 +12,9 @@ import time
 # --------------------------------------------------------------------------
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
-st.set_page_config(page_title="K-STAT 강력 수집기", layout="centered")
-st.title("🚢 K-STAT 데이터 수집기 (Robust Wait)")
-st.info("TAB 이동 후, Text / Value / InnerText 모든 속성을 뒤져서 데이터를 찾아냅니다.")
+st.set_page_config(page_title="K-STAT 드래그 수집기", layout="centered")
+st.title("🚢 K-STAT 데이터 수집기 (Drag & Extract)")
+st.info("TAB 이동 -> 강제 드래그(Ctrl+A) -> 선택된 텍스트 추출")
 
 # 입력 폼
 with st.form("input_form"):
@@ -22,42 +22,35 @@ with st.form("input_form"):
     submit = st.form_submit_button("데이터 수집 시작 🚀")
 
 # --------------------------------------------------------------------------
-# 2. 핵심 함수: 모든 속성 뒤져서 데이터 나오면 리턴
+# 2. 핵심 함수: 드래그(선택) 후 텍스트 가져오기
 # --------------------------------------------------------------------------
-def wait_and_extract_any_data(driver, timeout=10):
+def highlight_and_extract(driver):
     """
-    현재 포커스된 요소(active_element)에서
-    Text, Value, innerText 중 하나라도 데이터가 있으면 가져옵니다.
+    현재 커서가 있는 곳에서 'Ctrl + A'를 눌러 텍스트를 드래그(선택)한 뒤,
+    선택된 텍스트(Selection)를 자바스크립트로 가져옵니다.
     """
-    end_time = time.time() + timeout
-    
-    while time.time() < end_time:
-        try:
-            elem = driver.switch_to.active_element
+    try:
+        # 1. 현재 활성 요소 가져오기
+        elem = driver.switch_to.active_element
+        
+        # 2. 강제 드래그 시뮬레이션 (Ctrl + A)
+        # 윈도우/리눅스: Control, 맥: Command (서버는 리눅스이므로 Control)
+        elem.send_keys(Keys.CONTROL, 'a')
+        time.sleep(0.5) # 드래그 될 시간 대기
+        
+        # 3. 자바스크립트로 "지금 드래그된(선택된) 글자" 가져오기
+        selected_text = driver.execute_script("return window.getSelection().toString();")
+        
+        # 4. 만약 드래그로 안 잡히면, 일반 텍스트나 Value 속성 확인 (백업)
+        if not selected_text:
+            selected_text = elem.get_attribute("value")
+        if not selected_text:
+            selected_text = elem.text
             
-            # 1. 일반 텍스트 확인
-            txt = elem.text.strip()
-            if txt: return txt
-            
-            # 2. 입력값(Value) 확인 (input 태그일 경우)
-            val = elem.get_attribute("value")
-            if val and val.strip(): return val.strip()
-            
-            # 3. 숨겨진 텍스트(innerText) 확인 (div/span 등)
-            inner = elem.get_attribute("innerText")
-            if inner and inner.strip(): return inner.strip()
-            
-            # 4. JavaScript로 강제 추출 (최후의 수단)
-            js_txt = driver.execute_script("return arguments[0].textContent", elem)
-            if js_txt and js_txt.strip(): return js_txt.strip()
-            
-            # 데이터 없으면 0.5초 대기
-            time.sleep(0.5)
-            
-        except:
-            time.sleep(0.5)
-            
-    return "(데이터 없음)"
+        return selected_text.strip() if selected_text else "(값 없음)"
+        
+    except Exception as e:
+        return f"추출 에러: {str(e)}"
 
 # --------------------------------------------------------------------------
 # 3. 크롤링 메인 함수
@@ -138,37 +131,36 @@ def run_crawler(target_hsk):
             actions.send_keys(Keys.ENTER)
             actions.perform()
             
-            # ★ 동적 로딩 대기
             status.write("⏳ 데이터 렌더링 대기 (8초)...")
             time.sleep(8) 
             
             # -------------------------------------------------------
-            # [4] 데이터 추출 (TAB 이동 + 모든 속성 검사)
+            # [4] 데이터 추출 (TAB 이동 -> 드래그 -> 추출)
             # -------------------------------------------------------
             
-            # (A) TAB 10번 이동 -> 첫 번째 데이터
+            # (A) TAB 10번 이동
             status.write("👉 TAB 10회 이동 중...")
             actions = ActionChains(driver) 
             for _ in range(10):
                 actions.send_keys(Keys.TAB)
             actions.perform()
-            time.sleep(1) # 커서 안착 대기
+            time.sleep(1) 
             
-            # ★ 핵심: 텍스트든 밸류든 뭐든 가져와!
-            data_1 = wait_and_extract_any_data(driver)
-            status.write(f"✅ 첫 번째 데이터: {data_1}")
+            # ★ 1차 드래그 & 추출
+            data_1 = highlight_and_extract(driver)
+            status.write(f"✅ 첫 번째 데이터 (드래그): {data_1}")
             
-            # (B) TAB 5번 추가 이동 -> 두 번째 데이터
+            # (B) TAB 5번 추가 이동
             status.write("👉 TAB 5회 추가 이동 중...")
             actions = ActionChains(driver) 
             for _ in range(5):
                 actions.send_keys(Keys.TAB)
             actions.perform()
-            time.sleep(1) # 커서 안착 대기
+            time.sleep(1)
             
-            # ★ 핵심: 텍스트든 밸류든 뭐든 가져와!
-            data_2 = wait_and_extract_any_data(driver)
-            status.write(f"✅ 두 번째 데이터: {data_2}")
+            # ★ 2차 드래그 & 추출
+            data_2 = highlight_and_extract(driver)
+            status.write(f"✅ 두 번째 데이터 (드래그): {data_2}")
             
             # 결과 저장
             results.append({
@@ -198,6 +190,6 @@ if submit:
     df_result = run_crawler(hsk_code)
     
     if df_result is not None:
-        st.success("🎉 동적 데이터 수집 완료!")
+        st.success("🎉 데이터 수집 완료!")
         st.write("### 📊 수집 결과")
         st.dataframe(df_result, use_container_width=True)
