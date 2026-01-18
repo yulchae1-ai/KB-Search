@@ -12,9 +12,9 @@ import time
 # --------------------------------------------------------------------------
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
-st.set_page_config(page_title="K-STAT 동적 데이터 수집기", layout="centered")
-st.title("🚢 K-STAT 동적 데이터 수집기")
-st.info("JavaScript 엔진을 사용하여 동적으로 렌더링된 데이터를 강제로 추출합니다.")
+st.set_page_config(page_title="K-STAT 동적 크롤러", layout="centered")
+st.title("🚢 K-STAT 동적 데이터 수집기 (Smart Wait)")
+st.info("공유해주신 블로그 원리를 적용하여, 데이터가 로딩될 때까지 스마트하게 기다립니다.")
 
 # 입력 폼
 with st.form("input_form"):
@@ -22,28 +22,35 @@ with st.form("input_form"):
     submit = st.form_submit_button("데이터 수집 시작 🚀")
 
 # --------------------------------------------------------------------------
-# 2. 핵심 함수: 자바스크립트 강제 추출기
+# 2. 핵심 함수: 데이터가 뜰 때까지 기다려서 가져오기
 # --------------------------------------------------------------------------
-def get_active_element_text_via_js(driver):
+def get_data_smart_wait(driver, timeout=10):
     """
-    파이썬이 못 읽는 동적 데이터를 자바스크립트로 강제로 읽어옵니다.
-    현재 포커스(커서)가 있는 곳의 텍스트를 반환합니다.
+    현재 포커스된 요소에 텍스트가 채워질 때까지 기다렸다가 가져옵니다.
+    (동적 페이지 크롤링의 핵심: Loading 대기)
     """
-    try:
-        # 1. innerText (보이는 글자) 가져오기
-        text = driver.execute_script("return document.activeElement.innerText;")
-        
-        # 2. 만약 비어있다면, textContent (숨겨진 글자 포함) 가져오기
-        if not text:
-            text = driver.execute_script("return document.activeElement.textContent;")
+    end_time = time.time() + timeout
+    
+    while time.time() < end_time:
+        try:
+            # 1. JS로 현재 포커스된 요소의 텍스트 추출 (가장 확실함)
+            # innerText, textContent, value를 순차적으로 확인
+            text = driver.execute_script("""
+                var el = document.activeElement;
+                return el.innerText || el.textContent || el.value;
+            """)
             
-        # 3. 그래도 비어있다면, value (입력창 값) 가져오기
-        if not text:
-            text = driver.execute_script("return document.activeElement.value;")
+            # 2. 데이터가 있으면 바로 반환 (공백 제거 후 확인)
+            if text and text.strip():
+                return text.strip()
             
-        return text.strip() if text else "(데이터 없음)"
-    except:
-        return "추출 실패"
+            # 3. 없으면 0.5초 대기 후 재시도 (비동기 로딩 기다림)
+            time.sleep(0.5)
+            
+        except:
+            time.sleep(0.5)
+            
+    return "(데이터 없음 - 로딩 시간 초과)"
 
 # --------------------------------------------------------------------------
 # 3. 크롤링 메인 함수
@@ -60,11 +67,13 @@ def run_crawler(target_hsk):
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
     
+    # User-Agent 설정 (블로그 팁 적용: 봇 차단 방지)
     ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
     options.add_argument(f"user-agent={ua}")
+    options.add_argument("--lang=ko_KR") # 한국어 설정
 
     driver = webdriver.Chrome(options=options)
-    wait = WebDriverWait(driver, 15)
+    wait = WebDriverWait(driver, 20)
     actions = ActionChains(driver)
 
     results = []
@@ -103,7 +112,7 @@ def run_crawler(target_hsk):
         if not found_frame: driver.switch_to.default_content()
 
         # [3] 조회 매크로 실행
-        status.write(f"⏳ 조회 실행 중...")
+        status.write(f"⏳ HSK {target_hsk} 조회 중...")
         
         try:
             # HSK 클릭
@@ -119,42 +128,40 @@ def run_crawler(target_hsk):
             time.sleep(0.5)
 
             # TAB 11번 -> 엔터 (조회)
-            status.write("⏳ 조회 (TAB 11회)...")
+            status.write("⏳ 조회 버튼 실행 (TAB 11회)...")
             for _ in range(11): actions.send_keys(Keys.TAB)
             actions.send_keys(Keys.ENTER)
             actions.perform()
             
-            # ★ 동적 페이지 로딩 대기 (아주 중요) ★
-            status.write("⏳ 동적 데이터 렌더링 대기 (8초)...")
-            time.sleep(8) 
+            # [중요] 동적 로딩 대기 (블로그 원리 적용)
+            status.write("⏳ 데이터 로딩 대기 중 (Smart Wait)...")
+            time.sleep(5) # 기본 대기
             
             # -------------------------------------------------------
-            # [4] 데이터 추출 (사용자 정의 TAB 카운트 + JS 강제 추출)
+            # [4] 데이터 추출 (사용자 정의 TAB 카운트 + 스마트 웨이트)
             # -------------------------------------------------------
             
             # (A) TAB 10번 이동 -> 첫 번째 데이터
-            status.write("👉 TAB 10회 이동 중...")
+            status.write("👉 TAB 10회 이동 -> 첫 번째 데이터 감지 중...")
             actions = ActionChains(driver) 
             for _ in range(10):
                 actions.send_keys(Keys.TAB)
             actions.perform()
-            time.sleep(1) # 커서 이동 후 JS 로딩 대기
             
-            # JS로 강제 추출
-            data_1 = get_active_element_text_via_js(driver)
-            status.write(f"✅ 첫 번째 데이터 포착: {data_1}")
+            # ★ 핵심: 데이터가 뜰 때까지 기다려서 가져옴
+            data_1 = get_data_smart_wait(driver)
+            status.write(f"✅ 첫 번째 값 획득: {data_1}")
             
             # (B) TAB 5번 추가 이동 -> 두 번째 데이터
-            status.write("👉 TAB 5회 추가 이동 중...")
+            status.write("👉 TAB 5회 이동 -> 두 번째 데이터 감지 중...")
             actions = ActionChains(driver) 
             for _ in range(5):
                 actions.send_keys(Keys.TAB)
             actions.perform()
-            time.sleep(1) # 커서 이동 후 JS 로딩 대기
             
-            # JS로 강제 추출
-            data_2 = get_active_element_text_via_js(driver)
-            status.write(f"✅ 두 번째 데이터 포착: {data_2}")
+            # ★ 핵심: 데이터가 뜰 때까지 기다려서 가져옴
+            data_2 = get_data_smart_wait(driver)
+            status.write(f"✅ 두 번째 값 획득: {data_2}")
             
             # 결과 저장
             results.append({
@@ -187,3 +194,4 @@ if submit:
         st.success("🎉 동적 데이터 수집 완료!")
         st.write("### 📊 수집 결과")
         st.dataframe(df_result, use_container_width=True)
+        
