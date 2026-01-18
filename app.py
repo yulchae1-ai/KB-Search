@@ -13,58 +13,56 @@ import io
 # --------------------------------------------------------------------------
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
-st.set_page_config(page_title="K-STAT 심층 채굴기", layout="centered")
-st.title("🚢 K-STAT 심층 데이터 채굴기")
-st.info("TAB 이동 -> 현재 포커스된 요소의 '속살(HTML/Text/Value/Title)'을 전부 뒤집니다.")
+st.set_page_config(page_title="K-STAT 최종 해결", layout="centered")
+st.title("🚢 K-STAT 데이터 수집기 (Parent Node)")
+st.info("TAB 이동 -> 투명 Input 감지 시 -> 부모(Parent) 요소의 텍스트 강제 추출")
 
 # 입력 폼
 with st.form("input_form"):
     hsk_code = st.text_input("HSK 코드", value="847950")
-    submit = st.form_submit_button("채굴 시작 🚀")
+    submit = st.form_submit_button("데이터 수집 시작 🚀")
 
 # --------------------------------------------------------------------------
-# 2. 핵심 함수: 잡은 놈은 절대 놓치지 않는다 (Deep Extraction)
+# 2. 핵심 함수: 투명 Input의 '부모'에게서 데이터 뺏어오기
 # --------------------------------------------------------------------------
-def extract_deep_data(driver):
+def extract_data_from_parent(driver):
     """
-    현재 포커스된 요소가 가지고 있는 모든 정보를 긁어옵니다.
-    1. 텍스트 (innerText)
-    2. 숨겨진 텍스트 (textContent)
-    3. 입력값 (value)
-    4. 툴팁 (title)
-    5. 그것도 없으면 태그 이름이라도 반환 (디버깅용)
+    현재 포커스가 'tmpinput'(빈 껍데기)에 있다면,
+    그 부모 요소(TD/DIV)로 거슬러 올라가서 진짜 텍스트를 가져옵니다.
     """
     try:
         elem = driver.switch_to.active_element
         
-        # [1] JavaScript로 텍스트 강제 추출 (가장 강력)
-        # textContent는 숨겨진 텍스트나 자식 태그의 텍스트까지 모두 가져옵니다.
-        text_content = driver.execute_script("return arguments[0].textContent;", elem)
-        if text_content and text_content.strip():
-            return text_content.strip()
-
-        # [2] innerText 확인
-        inner_text = driver.execute_script("return arguments[0].innerText;", elem)
-        if inner_text and inner_text.strip():
-            return inner_text.strip()
-
-        # [3] Value 확인 (input 태그)
-        val = elem.get_attribute("value")
-        if val and val.strip():
-            return val.strip()
+        # 1. 우선 현재 요소에서 텍스트 시도
+        text = elem.text
+        value = elem.get_attribute("value")
+        
+        # 2. 만약 현재 요소가 비어있거나 'tmpinput'이라면 부모를 공략
+        # (id에 'tmp'가 들어가거나 값이 비어있는 경우)
+        elem_id = elem.get_attribute("id") or ""
+        
+        if (not text and not value) or "tmp" in elem_id:
+            # ★ 핵심: 자바스크립트로 부모 요소(parentElement)의 텍스트를 가져옴
+            # parentElement.innerText: 부모가 가진 눈에 보이는 텍스트
+            # parentElement.textContent: 부모가 가진 모든 텍스트
+            parent_text = driver.execute_script("""
+                var el = arguments[0];
+                var parent = el.parentElement;
+                if (!parent) return "";
+                return parent.innerText || parent.textContent;
+            """, elem)
             
-        # [4] Title 속성 확인 (가끔 그리드 데이터가 여기 숨어있음)
-        title = elem.get_attribute("title")
-        if title and title.strip():
-            return title.strip()
-            
-        # [5] 그래도 없으면... 현재 잡고 있는 태그가 뭔지라도 알려줘!
-        tag_name = elem.tag_name
-        html_snippet = elem.get_attribute("outerHTML")[:50] # 너무 기니까 앞부분만
-        return f"(데이터 없음 - 태그: <{tag_name}>, HTML: {html_snippet}...)"
+            if parent_text and parent_text.strip():
+                return parent_text.strip()
+        
+        # 3. 부모도 없으면 기존 방식(Value/Text) 반환
+        if value and value.strip(): return value.strip()
+        if text and text.strip(): return text.strip()
+        
+        return "(데이터 없음)"
 
     except Exception as e:
-        return f"에러 발생: {str(e)}"
+        return f"에러: {str(e)}"
 
 # --------------------------------------------------------------------------
 # 3. 크롤링 메인 함수
@@ -151,7 +149,7 @@ def run_crawler(target_hsk):
             time.sleep(8) 
             
             # -------------------------------------------------------
-            # [4] 데이터 심층 추출
+            # [4] 데이터 추출 (부모 요소 공략)
             # -------------------------------------------------------
             
             # (A) TAB 10번 이동 -> 첫 번째 데이터
@@ -162,9 +160,9 @@ def run_crawler(target_hsk):
             actions.perform()
             time.sleep(1)
             
-            # ★ 심층 추출
-            cell_a1 = extract_deep_data(driver)
-            status.write(f"✅ 추출된 값 (A1): {cell_a1}")
+            # ★ 부모 요소에서 텍스트 뺏어오기
+            cell_a1 = extract_data_from_parent(driver)
+            status.write(f"✅ 추출 성공 (A1): {cell_a1}")
             
             # (B) TAB 5번 추가 이동 -> 두 번째 데이터
             status.write("👉 TAB 5회 추가 이동 중...")
@@ -174,9 +172,9 @@ def run_crawler(target_hsk):
             actions.perform()
             time.sleep(1)
             
-            # ★ 심층 추출
-            cell_b1 = extract_deep_data(driver)
-            status.write(f"✅ 추출된 값 (B1): {cell_b1}")
+            # ★ 부모 요소에서 텍스트 뺏어오기
+            cell_b1 = extract_data_from_parent(driver)
+            status.write(f"✅ 추출 성공 (B1): {cell_b1}")
             
         except Exception as e:
             status.error(f"매크로 실패: {e}")
@@ -213,5 +211,6 @@ if submit:
         )
         
         st.write("---")
-        st.write("### 🔍 디버깅 결과 (봇이 본 것)")
-        st.code(f"A1 (TAB 10): {val1}\nB1 (TAB +5): {val2}")
+        st.write("### 🔍 최종 결과")
+        st.write(f"**A1:** {val1}")
+        st.write(f"**B1:** {val2}")
