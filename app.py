@@ -15,8 +15,8 @@ import io
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
 st.set_page_config(page_title="K-STAT 무역통계 수집기", layout="centered")
-st.title("🚢 K-STAT 데이터 수집기 (TAB 11회)")
-st.info("사용자 정의: [HSK 클릭] -> [TAB 2회] -> [입력] -> [TAB 11회] -> [엔터]")
+st.title("🚢 K-STAT 데이터 수집기 (키보드 매크로)")
+st.info("사용자 정의: [HSK 클릭] -> [TAB 2] -> [입력] -> [TAB 11+엔터] -> [TAB 8+DOWN+엔터]")
 
 # 입력 폼
 with st.form("input_form"):
@@ -89,58 +89,61 @@ def run_crawler(target_hsk):
         if not found_frame:
             driver.switch_to.default_content()
 
-        # [3] HSK 클릭 -> TAB 2번 -> 입력 -> TAB 11번 -> 엔터
-        status.write(f"⏳ 'HSK' 클릭 -> TAB 2번 -> 입력 -> TAB 11번 -> 엔터...")
+        # [3] 복합 키보드 액션 (사용자 요청 로직)
+        status.write(f"⏳ 키보드 매크로 실행 중...")
         
         try:
-            # 1. 'HSK' 라벨 클릭 (기준점)
+            # 1. 'HSK' 라벨 클릭 (시작점)
             hsk_label = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'HSK')]")))
             hsk_label.click()
             time.sleep(1) 
             
-            # 2. TAB 2번 이동 후 입력
+            # 2. [TAB 2번] -> [입력]
             actions.send_keys(Keys.TAB)
             actions.send_keys(Keys.TAB)
             actions.send_keys(target_hsk)
             actions.perform()
             time.sleep(0.5)
 
-            # 3. TAB 11번 이동 후 엔터 (사용자 요청 핵심 로직)
-            status.write("⏳ TAB 11회 입력 후 엔터...")
+            # 3. [TAB 11번] -> [엔터] (조회 실행)
+            status.write("⏳ TAB 11회 -> 엔터 (조회)...")
             for _ in range(11):
                 actions.send_keys(Keys.TAB)
-            
-            # 엔터 입력 (조회 실행)
             actions.send_keys(Keys.ENTER)
             actions.perform()
             
-            status.write("✅ 엔터 입력 완료! 결과 로딩 대기...")
+            status.write("⏳ 조회 결과 로딩 중 (5초 대기)...")
+            time.sleep(5) # 결과가 뜰 때까지 충분히 대기
+
+            # 4. [TAB 8번] -> [아래 화살표] -> [엔터] (상세 진입)
+            # 파란 글씨 찾는 대신 키보드로 이동
+            status.write("⏳ TAB 8회 -> DOWN -> 엔터 (상세 진입)...")
+            
+            # 액션 체인 초기화 후 다시 실행
+            actions = ActionChains(driver) 
+            
+            for _ in range(8):
+                actions.send_keys(Keys.TAB)
+            
+            actions.send_keys(Keys.DOWN)
+            actions.send_keys(Keys.ENTER)
+            actions.perform()
+            
+            status.write("✅ 상세 진입 명령 완료! 팝업 대기...")
             time.sleep(5)
             
         except Exception as e:
-            status.error(f"입력 실패: {e}")
+            status.error(f"키보드 입력 실패: {e}")
             st.image(driver.get_screenshot_as_png())
             return None
 
-        # [4] 결과 링크(파란색) 클릭
-        status.write("⏳ 결과 링크(파란색 글씨) 클릭...")
-        
-        try:
-            link_xpath = f"//a[contains(text(), '{target_hsk}')]"
-            # 클릭 가능한 상태가 될 때까지 기다림
-            link_el = wait.until(EC.element_to_be_clickable((By.XPATH, link_xpath)))
-            
-            # 확실하게 JS로 클릭
-            driver.execute_script("arguments[0].click();", link_el)
-            time.sleep(5)
-        except:
-            status.error("❌ 결과 링크를 찾지 못했습니다. (TAB 횟수 조절 필요 가능성)")
-            st.image(driver.get_screenshot_as_png())
-            return None
-
-        # 팝업 창 전환
+        # [4] 팝업 창 전환
         if len(driver.window_handles) > 1:
             driver.switch_to.window(driver.window_handles[-1])
+            status.write("✅ 상세 팝업창 감지 성공!")
+        else:
+            status.warning("⚠️ 팝업창이 뜨지 않았을 수 있습니다. (TAB 횟수 재확인 필요)")
+            st.image(driver.get_screenshot_as_png())
 
         # [5] 데이터 추출
         status.write("⏳ 데이터 추출 중...")
