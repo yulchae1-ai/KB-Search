@@ -12,9 +12,9 @@ import time
 # --------------------------------------------------------------------------
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
-st.set_page_config(page_title="K-STAT 드래그 수집기", layout="centered")
-st.title("🚢 K-STAT 데이터 수집기 (Drag & Extract)")
-st.info("TAB 이동 -> 강제 드래그(Ctrl+A) -> 선택된 텍스트 추출")
+st.set_page_config(page_title="K-STAT 강제 추출기", layout="centered")
+st.title("🚢 K-STAT 데이터 수집기 (Ctrl+A)")
+st.info("TAB 이동 -> Ctrl+A(전체선택) -> 선택된 텍스트 강제 추출")
 
 # 입력 폼
 with st.form("input_form"):
@@ -22,35 +22,32 @@ with st.form("input_form"):
     submit = st.form_submit_button("데이터 수집 시작 🚀")
 
 # --------------------------------------------------------------------------
-# 2. 핵심 함수: 드래그(선택) 후 텍스트 가져오기
+# 2. 핵심 함수: Ctrl+A 후 선택된 텍스트 가져오기
 # --------------------------------------------------------------------------
-def highlight_and_extract(driver):
+def select_all_and_extract(driver):
     """
-    현재 커서가 있는 곳에서 'Ctrl + A'를 눌러 텍스트를 드래그(선택)한 뒤,
+    현재 포커스된 요소에서 Ctrl+A를 입력하여 텍스트를 선택(블록)하고,
     선택된 텍스트(Selection)를 자바스크립트로 가져옵니다.
     """
     try:
-        # 1. 현재 활성 요소 가져오기
         elem = driver.switch_to.active_element
         
-        # 2. 강제 드래그 시뮬레이션 (Ctrl + A)
-        # 윈도우/리눅스: Control, 맥: Command (서버는 리눅스이므로 Control)
+        # 1. Ctrl + A 입력 (운영체제에 따라 Control 키 사용)
+        # 리눅스/윈도우 환경 기준
         elem.send_keys(Keys.CONTROL, 'a')
-        time.sleep(0.5) # 드래그 될 시간 대기
+        time.sleep(0.5) # 선택될 시간 대기
         
-        # 3. 자바스크립트로 "지금 드래그된(선택된) 글자" 가져오기
+        # 2. 자바스크립트로 '현재 드래그/선택된 텍스트' 가져오기
         selected_text = driver.execute_script("return window.getSelection().toString();")
         
-        # 4. 만약 드래그로 안 잡히면, 일반 텍스트나 Value 속성 확인 (백업)
+        # 3. 만약 선택된 텍스트가 없으면(input 태그 등), value 속성 확인 (2중 안전장치)
         if not selected_text:
             selected_text = elem.get_attribute("value")
-        if not selected_text:
-            selected_text = elem.text
             
-        return selected_text.strip() if selected_text else "(값 없음)"
+        return selected_text.strip() if selected_text else "(데이터 없음)"
         
     except Exception as e:
-        return f"추출 에러: {str(e)}"
+        return f"추출 오류: {str(e)}"
 
 # --------------------------------------------------------------------------
 # 3. 크롤링 메인 함수
@@ -131,36 +128,37 @@ def run_crawler(target_hsk):
             actions.send_keys(Keys.ENTER)
             actions.perform()
             
+            # 데이터 로딩 대기
             status.write("⏳ 데이터 렌더링 대기 (8초)...")
             time.sleep(8) 
             
             # -------------------------------------------------------
-            # [4] 데이터 추출 (TAB 이동 -> 드래그 -> 추출)
+            # [4] 데이터 추출 (TAB -> Ctrl+A -> 추출)
             # -------------------------------------------------------
             
-            # (A) TAB 10번 이동
+            # (A) TAB 10번 이동 -> 첫 번째 데이터
             status.write("👉 TAB 10회 이동 중...")
             actions = ActionChains(driver) 
             for _ in range(10):
                 actions.send_keys(Keys.TAB)
             actions.perform()
-            time.sleep(1) 
+            time.sleep(1) # 커서 안착
             
-            # ★ 1차 드래그 & 추출
-            data_1 = highlight_and_extract(driver)
-            status.write(f"✅ 첫 번째 데이터 (드래그): {data_1}")
+            # ★ Ctrl+A 후 추출
+            data_1 = select_all_and_extract(driver)
+            status.write(f"✅ 첫 번째 데이터 (Ctrl+A): {data_1}")
             
-            # (B) TAB 5번 추가 이동
+            # (B) TAB 5번 추가 이동 -> 두 번째 데이터
             status.write("👉 TAB 5회 추가 이동 중...")
             actions = ActionChains(driver) 
             for _ in range(5):
                 actions.send_keys(Keys.TAB)
             actions.perform()
-            time.sleep(1)
+            time.sleep(1) # 커서 안착
             
-            # ★ 2차 드래그 & 추출
-            data_2 = highlight_and_extract(driver)
-            status.write(f"✅ 두 번째 데이터 (드래그): {data_2}")
+            # ★ Ctrl+A 후 추출
+            data_2 = select_all_and_extract(driver)
+            status.write(f"✅ 두 번째 데이터 (Ctrl+A): {data_2}")
             
             # 결과 저장
             results.append({
