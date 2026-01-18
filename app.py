@@ -13,48 +13,58 @@ import io
 # --------------------------------------------------------------------------
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
-st.set_page_config(page_title="K-STAT 엑셀 생성기", layout="centered")
-st.title("🚢 K-STAT 복사/붙여넣기 엑셀 생성기")
-st.info("TAB 이동 -> Ctrl+A/C (복사) -> 엑셀 A1, B1 셀에 붙여넣기 -> 다운로드")
+st.set_page_config(page_title="K-STAT 심층 채굴기", layout="centered")
+st.title("🚢 K-STAT 심층 데이터 채굴기")
+st.info("TAB 이동 -> 현재 포커스된 요소의 '속살(HTML/Text/Value/Title)'을 전부 뒤집니다.")
 
 # 입력 폼
 with st.form("input_form"):
     hsk_code = st.text_input("HSK 코드", value="847950")
-    submit = st.form_submit_button("엑셀 생성 시작 🚀")
+    submit = st.form_submit_button("채굴 시작 🚀")
 
 # --------------------------------------------------------------------------
-# 2. 핵심 함수: Ctrl+A 후 '복사'한 효과 내기
+# 2. 핵심 함수: 잡은 놈은 절대 놓치지 않는다 (Deep Extraction)
 # --------------------------------------------------------------------------
-def simulate_copy(driver):
+def extract_deep_data(driver):
     """
-    현재 위치에서 Ctrl+A를 누르고, 선택된 내용을 가져옵니다.
-    (마치 Ctrl+C를 한 것과 동일한 데이터를 메모리에 저장)
+    현재 포커스된 요소가 가지고 있는 모든 정보를 긁어옵니다.
+    1. 텍스트 (innerText)
+    2. 숨겨진 텍스트 (textContent)
+    3. 입력값 (value)
+    4. 툴팁 (title)
+    5. 그것도 없으면 태그 이름이라도 반환 (디버깅용)
     """
     try:
         elem = driver.switch_to.active_element
         
-        # 1. Ctrl + A (전체 선택)
-        elem.send_keys(Keys.CONTROL, 'a')
-        time.sleep(1) # 선택이 확실히 되도록 1초 대기
-        
-        # 2. 데이터 가져오기 (클립보드 복사 시뮬레이션)
-        # 우선순위: 1.선택된 텍스트 -> 2.입력값(Value) -> 3.보이는 텍스트
-        
-        # (A) 드래그된 텍스트 확인
-        copied_data = driver.execute_script("return window.getSelection().toString();")
-        
-        # (B) 만약 드래그된 게 없으면, input의 value 확인
-        if not copied_data:
-            copied_data = elem.get_attribute("value")
+        # [1] JavaScript로 텍스트 강제 추출 (가장 강력)
+        # textContent는 숨겨진 텍스트나 자식 태그의 텍스트까지 모두 가져옵니다.
+        text_content = driver.execute_script("return arguments[0].textContent;", elem)
+        if text_content and text_content.strip():
+            return text_content.strip()
+
+        # [2] innerText 확인
+        inner_text = driver.execute_script("return arguments[0].innerText;", elem)
+        if inner_text and inner_text.strip():
+            return inner_text.strip()
+
+        # [3] Value 확인 (input 태그)
+        val = elem.get_attribute("value")
+        if val and val.strip():
+            return val.strip()
             
-        # (C) 그래도 없으면, 해당 요소의 텍스트 확인
-        if not copied_data:
-            copied_data = elem.text
+        # [4] Title 속성 확인 (가끔 그리드 데이터가 여기 숨어있음)
+        title = elem.get_attribute("title")
+        if title and title.strip():
+            return title.strip()
             
-        return copied_data.strip() if copied_data else "(데이터 없음)"
-        
+        # [5] 그래도 없으면... 현재 잡고 있는 태그가 뭔지라도 알려줘!
+        tag_name = elem.tag_name
+        html_snippet = elem.get_attribute("outerHTML")[:50] # 너무 기니까 앞부분만
+        return f"(데이터 없음 - 태그: <{tag_name}>, HTML: {html_snippet}...)"
+
     except Exception as e:
-        return f"복사 실패"
+        return f"에러 발생: {str(e)}"
 
 # --------------------------------------------------------------------------
 # 3. 크롤링 메인 함수
@@ -78,7 +88,6 @@ def run_crawler(target_hsk):
     wait = WebDriverWait(driver, 20)
     actions = ActionChains(driver)
 
-    # 엑셀에 들어갈 변수
     cell_a1 = ""
     cell_b1 = ""
 
@@ -98,7 +107,7 @@ def run_crawler(target_hsk):
             time.sleep(3)
         except:
             status.error("메뉴 이동 실패")
-            return None
+            return None, None
 
         # [2] Iframe 진입
         status.write("⏳ 입력 화면 진입...")
@@ -142,32 +151,32 @@ def run_crawler(target_hsk):
             time.sleep(8) 
             
             # -------------------------------------------------------
-            # [4] 복사 & 붙여넣기 로직
+            # [4] 데이터 심층 추출
             # -------------------------------------------------------
             
-            # (A) TAB 10번 이동 -> Ctrl+A -> 복사
-            status.write("👉 TAB 10회 이동 -> [Ctrl+C] 복사 시도...")
+            # (A) TAB 10번 이동 -> 첫 번째 데이터
+            status.write("👉 TAB 10회 이동 중...")
             actions = ActionChains(driver) 
             for _ in range(10):
                 actions.send_keys(Keys.TAB)
             actions.perform()
-            time.sleep(1) # 커서 안착 대기
+            time.sleep(1)
             
-            # ★ 복사하기
-            cell_a1 = simulate_copy(driver)
-            status.write(f"✅ 메모리에 복사된 값 (A1): {cell_a1}")
+            # ★ 심층 추출
+            cell_a1 = extract_deep_data(driver)
+            status.write(f"✅ 추출된 값 (A1): {cell_a1}")
             
-            # (B) TAB 5번 추가 이동 -> Ctrl+A -> 복사
-            status.write("👉 TAB 5회 추가 이동 -> [Ctrl+C] 복사 시도...")
+            # (B) TAB 5번 추가 이동 -> 두 번째 데이터
+            status.write("👉 TAB 5회 추가 이동 중...")
             actions = ActionChains(driver) 
             for _ in range(5):
                 actions.send_keys(Keys.TAB)
             actions.perform()
-            time.sleep(1) # 커서 안착 대기
+            time.sleep(1)
             
-            # ★ 복사하기
-            cell_b1 = simulate_copy(driver)
-            status.write(f"✅ 메모리에 복사된 값 (B1): {cell_b1}")
+            # ★ 심층 추출
+            cell_b1 = extract_deep_data(driver)
+            status.write(f"✅ 추출된 값 (B1): {cell_b1}")
             
         except Exception as e:
             status.error(f"매크로 실패: {e}")
@@ -187,18 +196,15 @@ if submit:
     val1, val2 = run_crawler(hsk_code)
     
     if val1 is not None:
-        st.success("🎉 복사 완료! 엑셀 생성을 시작합니다.")
+        st.success("🎉 작업 완료! 엑셀 생성을 시작합니다.")
         
-        # 엑셀 생성 (A1, B1 셀에 값 넣기)
-        # pandas DataFrame을 만들어서 엑셀로 변환 (Header 없이)
-        df = pd.DataFrame([[val1, val2]]) # 1행 2열 데이터
+        # 엑셀 생성
+        df = pd.DataFrame([[val1, val2]])
         
-        # 엑셀 파일 버퍼 생성
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, header=False, sheet_name='Sheet1')
             
-        # 다운로드 버튼 생성
         st.download_button(
             label="📥 엑셀 파일 다운로드 (result.xlsx)",
             data=buffer,
@@ -207,6 +213,5 @@ if submit:
         )
         
         st.write("---")
-        st.write("### 📋 미리보기")
-        st.write(f"**A1 셀:** {val1}")
-        st.write(f"**B1 셀:** {val2}")
+        st.write("### 🔍 디버깅 결과 (봇이 본 것)")
+        st.code(f"A1 (TAB 10): {val1}\nB1 (TAB +5): {val2}")
