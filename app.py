@@ -8,46 +8,53 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.keys import Keys
 import time
+import io
 
 # --------------------------------------------------------------------------
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
-st.set_page_config(page_title="K-STAT 강제 추출기", layout="centered")
-st.title("🚢 K-STAT 데이터 수집기 (Ctrl+A)")
-st.info("TAB 이동 -> Ctrl+A(전체선택) -> 선택된 텍스트 강제 추출")
+st.set_page_config(page_title="K-STAT 엑셀 생성기", layout="centered")
+st.title("🚢 K-STAT 복사/붙여넣기 엑셀 생성기")
+st.info("TAB 이동 -> Ctrl+A/C (복사) -> 엑셀 A1, B1 셀에 붙여넣기 -> 다운로드")
 
 # 입력 폼
 with st.form("input_form"):
     hsk_code = st.text_input("HSK 코드", value="847950")
-    submit = st.form_submit_button("데이터 수집 시작 🚀")
+    submit = st.form_submit_button("엑셀 생성 시작 🚀")
 
 # --------------------------------------------------------------------------
-# 2. 핵심 함수: Ctrl+A 후 선택된 텍스트 가져오기
+# 2. 핵심 함수: Ctrl+A 후 '복사'한 효과 내기
 # --------------------------------------------------------------------------
-def select_all_and_extract(driver):
+def simulate_copy(driver):
     """
-    현재 포커스된 요소에서 Ctrl+A를 입력하여 텍스트를 선택(블록)하고,
-    선택된 텍스트(Selection)를 자바스크립트로 가져옵니다.
+    현재 위치에서 Ctrl+A를 누르고, 선택된 내용을 가져옵니다.
+    (마치 Ctrl+C를 한 것과 동일한 데이터를 메모리에 저장)
     """
     try:
         elem = driver.switch_to.active_element
         
-        # 1. Ctrl + A 입력 (운영체제에 따라 Control 키 사용)
-        # 리눅스/윈도우 환경 기준
+        # 1. Ctrl + A (전체 선택)
         elem.send_keys(Keys.CONTROL, 'a')
-        time.sleep(0.5) # 선택될 시간 대기
+        time.sleep(1) # 선택이 확실히 되도록 1초 대기
         
-        # 2. 자바스크립트로 '현재 드래그/선택된 텍스트' 가져오기
-        selected_text = driver.execute_script("return window.getSelection().toString();")
+        # 2. 데이터 가져오기 (클립보드 복사 시뮬레이션)
+        # 우선순위: 1.선택된 텍스트 -> 2.입력값(Value) -> 3.보이는 텍스트
         
-        # 3. 만약 선택된 텍스트가 없으면(input 태그 등), value 속성 확인 (2중 안전장치)
-        if not selected_text:
-            selected_text = elem.get_attribute("value")
+        # (A) 드래그된 텍스트 확인
+        copied_data = driver.execute_script("return window.getSelection().toString();")
+        
+        # (B) 만약 드래그된 게 없으면, input의 value 확인
+        if not copied_data:
+            copied_data = elem.get_attribute("value")
             
-        return selected_text.strip() if selected_text else "(데이터 없음)"
+        # (C) 그래도 없으면, 해당 요소의 텍스트 확인
+        if not copied_data:
+            copied_data = elem.text
+            
+        return copied_data.strip() if copied_data else "(데이터 없음)"
         
     except Exception as e:
-        return f"추출 오류: {str(e)}"
+        return f"복사 실패"
 
 # --------------------------------------------------------------------------
 # 3. 크롤링 메인 함수
@@ -71,7 +78,9 @@ def run_crawler(target_hsk):
     wait = WebDriverWait(driver, 20)
     actions = ActionChains(driver)
 
-    results = []
+    # 엑셀에 들어갈 변수
+    cell_a1 = ""
+    cell_b1 = ""
 
     try:
         # [1] 접속 및 메뉴 이동
@@ -133,61 +142,71 @@ def run_crawler(target_hsk):
             time.sleep(8) 
             
             # -------------------------------------------------------
-            # [4] 데이터 추출 (TAB -> Ctrl+A -> 추출)
+            # [4] 복사 & 붙여넣기 로직
             # -------------------------------------------------------
             
-            # (A) TAB 10번 이동 -> 첫 번째 데이터
-            status.write("👉 TAB 10회 이동 중...")
+            # (A) TAB 10번 이동 -> Ctrl+A -> 복사
+            status.write("👉 TAB 10회 이동 -> [Ctrl+C] 복사 시도...")
             actions = ActionChains(driver) 
             for _ in range(10):
                 actions.send_keys(Keys.TAB)
             actions.perform()
-            time.sleep(1) # 커서 안착
+            time.sleep(1) # 커서 안착 대기
             
-            # ★ Ctrl+A 후 추출
-            data_1 = select_all_and_extract(driver)
-            status.write(f"✅ 첫 번째 데이터 (Ctrl+A): {data_1}")
+            # ★ 복사하기
+            cell_a1 = simulate_copy(driver)
+            status.write(f"✅ 메모리에 복사된 값 (A1): {cell_a1}")
             
-            # (B) TAB 5번 추가 이동 -> 두 번째 데이터
-            status.write("👉 TAB 5회 추가 이동 중...")
+            # (B) TAB 5번 추가 이동 -> Ctrl+A -> 복사
+            status.write("👉 TAB 5회 추가 이동 -> [Ctrl+C] 복사 시도...")
             actions = ActionChains(driver) 
             for _ in range(5):
                 actions.send_keys(Keys.TAB)
             actions.perform()
-            time.sleep(1) # 커서 안착
+            time.sleep(1) # 커서 안착 대기
             
-            # ★ Ctrl+A 후 추출
-            data_2 = select_all_and_extract(driver)
-            status.write(f"✅ 두 번째 데이터 (Ctrl+A): {data_2}")
-            
-            # 결과 저장
-            results.append({
-                "구분": "첫 번째 데이터 (TAB 10)",
-                "값": data_1
-            })
-            results.append({
-                "구분": "두 번째 데이터 (+TAB 5)",
-                "값": data_2
-            })
+            # ★ 복사하기
+            cell_b1 = simulate_copy(driver)
+            status.write(f"✅ 메모리에 복사된 값 (B1): {cell_b1}")
             
         except Exception as e:
             status.error(f"매크로 실패: {e}")
-            return None
+            return None, None
 
     except Exception as e:
         st.error(f"오류: {e}")
         st.image(driver.get_screenshot_as_png())
-        return None
+        return None, None
     finally:
         driver.quit()
     
-    return pd.DataFrame(results)
+    return cell_a1, cell_b1
 
 # 실행 및 결과 출력
 if submit:
-    df_result = run_crawler(hsk_code)
+    val1, val2 = run_crawler(hsk_code)
     
-    if df_result is not None:
-        st.success("🎉 데이터 수집 완료!")
-        st.write("### 📊 수집 결과")
-        st.dataframe(df_result, use_container_width=True)
+    if val1 is not None:
+        st.success("🎉 복사 완료! 엑셀 생성을 시작합니다.")
+        
+        # 엑셀 생성 (A1, B1 셀에 값 넣기)
+        # pandas DataFrame을 만들어서 엑셀로 변환 (Header 없이)
+        df = pd.DataFrame([[val1, val2]]) # 1행 2열 데이터
+        
+        # 엑셀 파일 버퍼 생성
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, header=False, sheet_name='Sheet1')
+            
+        # 다운로드 버튼 생성
+        st.download_button(
+            label="📥 엑셀 파일 다운로드 (result.xlsx)",
+            data=buffer,
+            file_name="result.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
+        st.write("---")
+        st.write("### 📋 미리보기")
+        st.write(f"**A1 셀:** {val1}")
+        st.write(f"**B1 셀:** {val2}")
