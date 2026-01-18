@@ -12,9 +12,9 @@ import time
 # --------------------------------------------------------------------------
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
-st.set_page_config(page_title="K-STAT 무역통계 수집기", layout="centered")
-st.title("🚢 K-STAT 데이터 수집기 (Tab Count Ver)")
-st.info("사용자 정의: 조회 후 [TAB 10회] -> 데이터1 -> [TAB 5회] -> 데이터2 추출")
+st.set_page_config(page_title="K-STAT 동적 데이터 수집기", layout="centered")
+st.title("🚢 K-STAT 동적 데이터 수집기")
+st.info("JavaScript 엔진을 사용하여 동적으로 렌더링된 데이터를 강제로 추출합니다.")
 
 # 입력 폼
 with st.form("input_form"):
@@ -22,7 +22,31 @@ with st.form("input_form"):
     submit = st.form_submit_button("데이터 수집 시작 🚀")
 
 # --------------------------------------------------------------------------
-# 2. 크롤링 함수
+# 2. 핵심 함수: 자바스크립트 강제 추출기
+# --------------------------------------------------------------------------
+def get_active_element_text_via_js(driver):
+    """
+    파이썬이 못 읽는 동적 데이터를 자바스크립트로 강제로 읽어옵니다.
+    현재 포커스(커서)가 있는 곳의 텍스트를 반환합니다.
+    """
+    try:
+        # 1. innerText (보이는 글자) 가져오기
+        text = driver.execute_script("return document.activeElement.innerText;")
+        
+        # 2. 만약 비어있다면, textContent (숨겨진 글자 포함) 가져오기
+        if not text:
+            text = driver.execute_script("return document.activeElement.textContent;")
+            
+        # 3. 그래도 비어있다면, value (입력창 값) 가져오기
+        if not text:
+            text = driver.execute_script("return document.activeElement.value;")
+            
+        return text.strip() if text else "(데이터 없음)"
+    except:
+        return "추출 실패"
+
+# --------------------------------------------------------------------------
+# 3. 크롤링 메인 함수
 # --------------------------------------------------------------------------
 def run_crawler(target_hsk):
     status = st.empty()
@@ -95,47 +119,51 @@ def run_crawler(target_hsk):
             time.sleep(0.5)
 
             # TAB 11번 -> 엔터 (조회)
+            status.write("⏳ 조회 (TAB 11회)...")
             for _ in range(11): actions.send_keys(Keys.TAB)
             actions.send_keys(Keys.ENTER)
             actions.perform()
             
-            status.write("⏳ 조회 완료. 결과 로딩 대기 (6초)...")
-            time.sleep(6) # 데이터가 뜰 때까지 충분히 대기
+            # ★ 동적 페이지 로딩 대기 (아주 중요) ★
+            status.write("⏳ 동적 데이터 렌더링 대기 (8초)...")
+            time.sleep(8) 
             
             # -------------------------------------------------------
-            # [4] 데이터 추출 (사용자 정의 TAB 카운트)
+            # [4] 데이터 추출 (사용자 정의 TAB 카운트 + JS 강제 추출)
             # -------------------------------------------------------
             
-            # (A) TAB 10번 이동
-            status.write("👉 TAB 10회 이동 중 (첫 번째 데이터)...")
-            actions = ActionChains(driver) # 액션 초기화
+            # (A) TAB 10번 이동 -> 첫 번째 데이터
+            status.write("👉 TAB 10회 이동 중...")
+            actions = ActionChains(driver) 
             for _ in range(10):
                 actions.send_keys(Keys.TAB)
             actions.perform()
-            time.sleep(0.5)
+            time.sleep(1) # 커서 이동 후 JS 로딩 대기
             
-            # 현재 커서가 있는 곳의 텍스트 읽기
-            data_1 = driver.switch_to.active_element.text.strip()
+            # JS로 강제 추출
+            data_1 = get_active_element_text_via_js(driver)
+            status.write(f"✅ 첫 번째 데이터 포착: {data_1}")
             
-            # (B) TAB 5번 추가 이동
-            status.write("👉 TAB 5회 추가 이동 중 (두 번째 데이터)...")
-            actions = ActionChains(driver) # 액션 초기화
+            # (B) TAB 5번 추가 이동 -> 두 번째 데이터
+            status.write("👉 TAB 5회 추가 이동 중...")
+            actions = ActionChains(driver) 
             for _ in range(5):
                 actions.send_keys(Keys.TAB)
             actions.perform()
-            time.sleep(0.5)
+            time.sleep(1) # 커서 이동 후 JS 로딩 대기
             
-            # 현재 커서가 있는 곳의 텍스트 읽기
-            data_2 = driver.switch_to.active_element.text.strip()
+            # JS로 강제 추출
+            data_2 = get_active_element_text_via_js(driver)
+            status.write(f"✅ 두 번째 데이터 포착: {data_2}")
             
             # 결과 저장
             results.append({
-                "순서": "첫 번째 데이터 (TAB 10)",
-                "값": data_1 if data_1 else "(빈 값)"
+                "구분": "첫 번째 데이터 (TAB 10)",
+                "값": data_1
             })
             results.append({
-                "순서": "두 번째 데이터 (+TAB 5)",
-                "값": data_2 if data_2 else "(빈 값)"
+                "구분": "두 번째 데이터 (+TAB 5)",
+                "값": data_2
             })
             
         except Exception as e:
@@ -156,6 +184,6 @@ if submit:
     df_result = run_crawler(hsk_code)
     
     if df_result is not None:
-        st.success("🎉 추출 완료!")
+        st.success("🎉 동적 데이터 수집 완료!")
         st.write("### 📊 수집 결과")
         st.dataframe(df_result, use_container_width=True)
