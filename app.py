@@ -15,8 +15,8 @@ import io
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
 st.set_page_config(page_title="K-STAT 무역통계 수집기", layout="centered")
-st.title("🚢 K-STAT 데이터 수집기 (TAB 3번)")
-st.info("사용자 정의: 'HSK' 글자 클릭 후 TAB 3회 입력하여 조회합니다.")
+st.title("🚢 K-STAT 데이터 수집기 (TAB 2번)")
+st.info("사용자 정의: 'HSK' 클릭 -> TAB 2번 -> 입력 -> '조회' 버튼 클릭")
 
 # 입력 폼
 with st.form("input_form"):
@@ -38,7 +38,7 @@ def run_crawler(target_hsk):
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
     
-    # 한글 폰트 미설치시에도 동작하도록 User-Agent 설정
+    # User-Agent 설정
     ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
     options.add_argument(f"user-agent={ua}")
 
@@ -90,26 +90,35 @@ def run_crawler(target_hsk):
         if not found_frame:
             driver.switch_to.default_content()
 
-        # [3] 'HSK' 클릭 -> TAB 3번 -> 입력 (사용자 요청 로직)
-        status.write(f"⏳ 'HSK' 클릭 -> TAB 3번 -> {target_hsk} 입력...")
+        # [3] 'HSK' 클릭 -> TAB 2번 -> 입력 -> 조회 버튼 클릭
+        status.write(f"⏳ 'HSK' 클릭 -> TAB 2번 -> {target_hsk} 입력...")
         
         try:
             # 1. 'HSK' 글자 찾기 (입력창 근처의 라벨)
+            # 보통 <label>이나 <td> 안에 있음
             hsk_label = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'HSK')]")))
             
             # 2. 클릭 (포커스 기준점 잡기)
             hsk_label.click()
             time.sleep(1) 
             
-            # 3. TAB 3번 + 입력 + 엔터
+            # 3. TAB 2번 이동
             actions.send_keys(Keys.TAB)
             actions.send_keys(Keys.TAB)
-            actions.send_keys(Keys.TAB)
-            actions.send_keys(target_hsk)
-            actions.send_keys(Keys.ENTER)
             actions.perform()
+            time.sleep(0.5)
+
+            # 4. HSK 코드 입력
+            actions.send_keys(target_hsk)
+            actions.perform()
+            time.sleep(0.5)
+
+            # 5. '조회' 버튼 찾아서 클릭 (엔터 대신 버튼 클릭)
+            status.write("⏳ '조회' 버튼 클릭 중...")
+            search_btn = driver.find_element(By.XPATH, "//*[contains(text(), '조회')]")
+            driver.execute_script("arguments[0].click();", search_btn)
             
-            status.write("✅ 입력 완료! 결과 로딩 대기...")
+            status.write("✅ 조회 클릭 완료! 결과 로딩 대기...")
             time.sleep(5)
             
         except Exception as e:
