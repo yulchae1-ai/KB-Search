@@ -13,9 +13,9 @@ import io
 # --------------------------------------------------------------------------
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
-st.set_page_config(page_title="K-STAT 최종 해결", layout="centered")
-st.title("🚢 K-STAT 데이터 수집기 (Parent Node)")
-st.info("TAB 이동 -> 투명 Input 감지 시 -> 부모(Parent) 요소의 텍스트 강제 추출")
+st.set_page_config(page_title="K-STAT 정밀 타격", layout="centered")
+st.title("🚢 K-STAT 데이터 수집기 (Direct XPATH)")
+st.info("투명 입력창(tmpinput)을 무시하고, 실제 데이터가 있는 셀(TD)을 직접 찾아냅니다.")
 
 # 입력 폼
 with st.form("input_form"):
@@ -23,43 +23,69 @@ with st.form("input_form"):
     submit = st.form_submit_button("데이터 수집 시작 🚀")
 
 # --------------------------------------------------------------------------
-# 2. 핵심 함수: 투명 Input의 '부모'에게서 데이터 뺏어오기
+# 2. 핵심 함수: XPATH로 진짜 데이터 셀 찾기
 # --------------------------------------------------------------------------
-def extract_data_from_parent(driver):
+def find_data_row_and_extract(driver, year, month_text):
     """
-    현재 포커스가 'tmpinput'(빈 껍데기)에 있다면,
-    그 부모 요소(TD/DIV)로 거슬러 올라가서 진짜 텍스트를 가져옵니다.
+    1. '2025년'을 찾아 클릭(펼치기)
+    2. '12월'이 포함된 행(TR)을 찾기
+    3. 그 행에서 '수출금액'에 해당하는 숫자 데이터를 추출
     """
     try:
-        elem = driver.switch_to.active_element
-        
-        # 1. 우선 현재 요소에서 텍스트 시도
-        text = elem.text
-        value = elem.get_attribute("value")
-        
-        # 2. 만약 현재 요소가 비어있거나 'tmpinput'이라면 부모를 공략
-        # (id에 'tmp'가 들어가거나 값이 비어있는 경우)
-        elem_id = elem.get_attribute("id") or ""
-        
-        if (not text and not value) or "tmp" in elem_id:
-            # ★ 핵심: 자바스크립트로 부모 요소(parentElement)의 텍스트를 가져옴
-            # parentElement.innerText: 부모가 가진 눈에 보이는 텍스트
-            # parentElement.textContent: 부모가 가진 모든 텍스트
-            parent_text = driver.execute_script("""
-                var el = arguments[0];
-                var parent = el.parentElement;
-                if (!parent) return "";
-                return parent.innerText || parent.textContent;
-            """, elem)
+        # [1] 연도 클릭 (데이터 펼치기)
+        try:
+            xpath_year = f"//*[contains(text(), '{year}년')]"
+            # 2025년이 보이기를 기다렸다가 클릭
+            year_elem = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.XPATH, xpath_year))
+            )
+            driver.execute_script("arguments[0].click();", year_elem)
+            time.sleep(2) # 데이터 로딩 대기
+        except:
+            return "(연도 없음)"
+
+        # [2] '12월' 텍스트가 있는 셀(TD) 찾기
+        # 그리드 구조상 '12월' 텍스트는 <span>12월</span> 형태일 수 있음
+        try:
+            xpath_month = f"//td[contains(., '{month_text}')]"
+            month_elem = WebDriverWait(driver, 5).until(
+                EC.presence_of_element_located((By.XPATH, xpath_month))
+            )
             
-            if parent_text and parent_text.strip():
-                return parent_text.strip()
-        
-        # 3. 부모도 없으면 기존 방식(Value/Text) 반환
-        if value and value.strip(): return value.strip()
-        if text and text.strip(): return text.strip()
-        
-        return "(데이터 없음)"
+            # [3] '12월' 셀의 형제들(Sibling) 중에서 '수출금액' 찾기
+            # '12월' 셀 바로 다음에 오는 셀들이 데이터임.
+            # 보통 순서: [월] [수출금액] [수출증감률] [수출중량] ...
+            # 따라서 '12월' 셀의 '다음 다음' 혹은 '바로 다음' 셀을 확인해야 함.
+            
+            # 해당 행(tr)의 모든 td를 가져옴
+            parent_tr = month_elem.find_element(By.XPATH, "./ancestor::tr")
+            tds = parent_tr.find_elements(By.TAG_NAME, "td")
+            
+            found_data = ""
+            
+            # td들을 순회하며 '숫자와 콤마'로 된 금액 데이터를 찾음
+            for td in tds:
+                text = td.text.strip() # text가 안되면 innerText 사용
+                if not text:
+                    text = td.get_attribute("innerText").strip()
+                
+                # 조건: "12월" 텍스트가 아니고, 숫자와 콤마(,)가 포함된 데이터
+                # 예: "256,598"
+                if text and (month_text not in text) and any(c.isdigit() for c in text):
+                    # 수출 금액은 보통 콤마가 있음. 
+                    # 확실하게 하기 위해 콤마 제거 후 숫자인지 체크
+                    clean_val = text.replace(',', '').replace('.', '')
+                    if clean_val.isdigit():
+                        found_data = text
+                        break # 첫 번째 나오는 숫자가 보통 '수출금액' (가장 왼쪽)
+            
+            if found_data:
+                return found_data
+            else:
+                return "(데이터 패턴 불일치)"
+
+        except Exception as e:
+            return f"(월 데이터 못 찾음: {e})"
 
     except Exception as e:
         return f"에러: {str(e)}"
@@ -148,33 +174,32 @@ def run_crawler(target_hsk):
             status.write("⏳ 데이터 렌더링 대기 (8초)...")
             time.sleep(8) 
             
-            # -------------------------------------------------------
-            # [4] 데이터 추출 (부모 요소 공략)
-            # -------------------------------------------------------
-            
-            # (A) TAB 10번 이동 -> 첫 번째 데이터
-            status.write("👉 TAB 10회 이동 중...")
+            # 상세 페이지 진입 (TAB 8 -> DOWN -> ENTER)
+            status.write("⏳ 상세 페이지 진입 중...")
             actions = ActionChains(driver) 
-            for _ in range(10):
-                actions.send_keys(Keys.TAB)
+            for _ in range(8): actions.send_keys(Keys.TAB)
+            actions.send_keys(Keys.DOWN)
+            actions.send_keys(Keys.ENTER)
             actions.perform()
-            time.sleep(1)
+            time.sleep(5)
             
-            # ★ 부모 요소에서 텍스트 뺏어오기
-            cell_a1 = extract_data_from_parent(driver)
-            status.write(f"✅ 추출 성공 (A1): {cell_a1}")
+            # 팝업 창 전환
+            if len(driver.window_handles) > 1:
+                driver.switch_to.window(driver.window_handles[-1])
             
-            # (B) TAB 5번 추가 이동 -> 두 번째 데이터
-            status.write("👉 TAB 5회 추가 이동 중...")
-            actions = ActionChains(driver) 
-            for _ in range(5):
-                actions.send_keys(Keys.TAB)
-            actions.perform()
-            time.sleep(1)
+            # -------------------------------------------------------
+            # [4] 데이터 정밀 추출 (Active Element 사용 안 함!)
+            # -------------------------------------------------------
             
-            # ★ 부모 요소에서 텍스트 뺏어오기
-            cell_b1 = extract_data_from_parent(driver)
-            status.write(f"✅ 추출 성공 (B1): {cell_b1}")
+            # (A) 2026년 1월 데이터
+            status.write("👉 2026년 1월 데이터 찾는 중...")
+            cell_a1 = find_data_row_and_extract(driver, "2026", "1월")
+            status.write(f"✅ 결과: {cell_a1}")
+            
+            # (B) 2025년 12월 데이터
+            status.write("👉 2025년 12월 데이터 찾는 중...")
+            cell_b1 = find_data_row_and_extract(driver, "2025", "12월")
+            status.write(f"✅ 결과: {cell_b1}")
             
         except Exception as e:
             status.error(f"매크로 실패: {e}")
@@ -193,7 +218,7 @@ def run_crawler(target_hsk):
 if submit:
     val1, val2 = run_crawler(hsk_code)
     
-    if val1 is not None:
+    if val1 or val2:
         st.success("🎉 작업 완료! 엑셀 생성을 시작합니다.")
         
         # 엑셀 생성
@@ -212,5 +237,7 @@ if submit:
         
         st.write("---")
         st.write("### 🔍 최종 결과")
-        st.write(f"**A1:** {val1}")
-        st.write(f"**B1:** {val2}")
+        st.write(f"**2026-01:** {val1}")
+        st.write(f"**2025-12:** {val2}")
+    else:
+        st.error("데이터를 찾지 못했습니다.")
