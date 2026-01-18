@@ -7,15 +7,15 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.keys import Keys
-from bs4 import BeautifulSoup  # ★ 핵심 도구: 소스코드 해부기
+from bs4 import BeautifulSoup 
 import time
 
 # --------------------------------------------------------------------------
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
-st.set_page_config(page_title="K-STAT 데이터 정밀 분석기", layout="centered")
-st.title("🚢 K-STAT 데이터 정밀 분석기 (BS4)")
-st.info("화면 동작(키보드) 대신, 페이지 소스(HTML)를 직접 분석하여 데이터를 추출합니다.")
+st.set_page_config(page_title="K-STAT 정밀 수집기", layout="centered")
+st.title("🚢 K-STAT 정밀 수집기 (Source Parsing)")
+st.info("블로그 방식 적용: HTML 소스를 직접 가져와서 표(Table)를 정밀 분해합니다.")
 
 # 입력 폼
 with st.form("input_form"):
@@ -23,42 +23,66 @@ with st.form("input_form"):
     submit = st.form_submit_button("데이터 수집 시작 🚀")
 
 # --------------------------------------------------------------------------
-# 2. 핵심 함수: BeautifulSoup을 이용한 데이터 정밀 타격
+# 2. 핵심 함수: BeautifulSoup으로 표 뜯어보기
 # --------------------------------------------------------------------------
-def parse_data_from_html(page_source, year, month_keyword):
+def parse_table_manually(driver, year, month_keyword):
     """
-    브라우저의 현재 화면(HTML)을 통째로 가져와서
-    BeautifulSoup으로 '연도'와 '월'에 맞는 숫자를 찾아냅니다.
+    1. 현재 화면의 소스코드(HTML)를 통째로 가져온다.
+    2. BeautifulSoup으로 표(table) 태그를 찾는다.
+    3. 행(tr)을 하나씩 돌면서 '월'과 '수출금액' 위치를 찾는다.
     """
-    soup = BeautifulSoup(page_source, 'html.parser')
-    
-    # 1. K-STAT의 데이터 테이블 찾기 (보통 gridBody 등으로 되어 있음)
-    # 테이블 행(tr)을 모두 가져옵니다.
-    rows = soup.find_all('tr')
-    
-    target_amount = "찾지 못함"
-    
-    for row in rows:
-        text = row.get_text(strip=True)
+    try:
+        # [1] 연도 클릭 (데이터 펼치기)
+        # 이미 펼쳐져 있을 수도 있으니 try-except로 가볍게 처리
+        try:
+            xpath_year = f"//*[contains(text(), '{year}')]"
+            year_elem = driver.find_element(By.XPATH, xpath_year)
+            driver.execute_script("arguments[0].click();", year_elem)
+            time.sleep(2) # 데이터 로딩 대기
+        except:
+            pass # 이미 펼쳐져 있거나 해당 연도가 없을 수 있음
+
+        # [2] 소스코드 가져오기 (가장 확실한 방법)
+        html = driver.page_source
+        soup = BeautifulSoup(html, 'html.parser')
+
+        # [3] 데이터가 있는 테이블 찾기
+        # K-STAT 팝업에는 보통 데이터용 테이블이 하나 크게 있음
+        # 모든 행(tr)을 가져와서 검사
+        rows = soup.find_all('tr')
         
-        # 2. 해당 '월'(예: 12월)이 포함된 행인지 확인
-        if month_keyword in text:
-            # 3. 그 행의 모든 칸(td)을 가져옴
-            cols = row.find_all('td')
+        target_amount = "데이터 없음"
+        
+        for row in rows:
+            # 각 행의 텍스트를 가져옴 (공백 제거)
+            row_text = row.get_text(strip=True)
             
-            # 4. 칸을 순회하면서 '수출금액' 패턴(숫자와 콤마)을 찾음
-            for col in cols:
-                val = col.get_text(strip=True)
+            # 해당 '월'(예: 12월)이 포함된 행인지 확인
+            if month_keyword in row_text:
+                # 4. 해당 행의 칸(td)들을 모두 가져옴
+                cols = row.find_all('td')
                 
-                # 조건: "12월" 글자가 아니고, 숫자와 콤마로만 구성된 데이터
-                # (수출금액은 보통 256,598 처럼 생겼으므로)
-                if val and val != month_keyword:
-                    # 콤마 제거 후 숫자인지 확인
-                    clean_val = val.replace(',', '').replace('.', '')
-                    if clean_val.isdigit():
-                        return val # 찾았다! (256,598)
-                        
-    return target_amount
+                # 칸이 여러개여야 데이터 행임 (제목 행 제외)
+                if len(cols) > 1:
+                    # 보통 순서: [체크박스] [년월] [수출금액] [수출증감률] ...
+                    # 수출금액은 '수출' 섹션의 첫 번째 숫자 컬럼임.
+                    # 우리는 "오른쪽에서부터 찾거나" "숫자 패턴"으로 찾음
+                    
+                    for col in cols:
+                        text = col.get_text(strip=True)
+                        # 콤마(,)가 포함된 숫자라면 수출금액일 확률 99%
+                        # "12월"이라는 글자가 아니면서, 숫자가 포함된 것
+                        if text and (text != month_keyword) and any(c.isdigit() for c in text):
+                            # 불필요한 공백 제거
+                            clean_text = text.replace(',', '').strip()
+                            # 진짜 숫자인지 확인
+                            if clean_text.isdigit():
+                                return text # 원본 텍스트(콤마 포함) 반환
+                                
+        return target_amount
+
+    except Exception as e:
+        return f"파싱 에러: {str(e)}"
 
 # --------------------------------------------------------------------------
 # 3. 크롤링 메인 함수
@@ -79,7 +103,7 @@ def run_crawler(target_hsk):
     options.add_argument(f"user-agent={ua}")
 
     driver = webdriver.Chrome(options=options)
-    wait = WebDriverWait(driver, 20)
+    wait = WebDriverWait(driver, 15)
     actions = ActionChains(driver)
 
     results = []
@@ -117,8 +141,8 @@ def run_crawler(target_hsk):
                 continue
         if not found_frame: driver.switch_to.default_content()
 
-        # [3] 조회 (매크로 사용)
-        status.write(f"⏳ 조회 실행 중...")
+        # [3] 조회 매크로 실행
+        status.write(f"⏳ 조회 중 ({target_hsk})...")
         try:
             hsk_label = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'HSK')]")))
             hsk_label.click()
@@ -132,17 +156,15 @@ def run_crawler(target_hsk):
             time.sleep(0.5)
 
             # 조회 (TAB 11 -> ENTER)
-            status.write("⏳ 조회 버튼 타격 (TAB 11회)...")
             for _ in range(11): actions.send_keys(Keys.TAB)
             actions.send_keys(Keys.ENTER)
             actions.perform()
             
-            # ★ 데이터 로딩 대기 (충분히)
-            status.write("⏳ 데이터 집계 중 (8초 대기)...")
-            time.sleep(8) 
+            status.write("⏳ 데이터 로딩 대기 (6초)...")
+            time.sleep(6) 
             
-            # 상세 페이지 진입 (TAB 8 -> DOWN -> ENTER)
-            status.write("⏳ 상세 팝업 진입 시도...")
+            # 상세 팝업 진입 (TAB 8 -> DOWN -> ENTER)
+            status.write("⏳ 상세 페이지 진입...")
             actions = ActionChains(driver) 
             for _ in range(8): actions.send_keys(Keys.TAB)
             actions.send_keys(Keys.DOWN)
@@ -151,52 +173,29 @@ def run_crawler(target_hsk):
             time.sleep(5)
 
         except Exception as e:
-            status.error(f"조회 실패: {e}")
+            status.error(f"매크로 실패: {e}")
             return None
 
         # [4] 팝업 창 전환
         if len(driver.window_handles) > 1:
             driver.switch_to.window(driver.window_handles[-1])
-            status.write("✅ 팝업창 포착! 소스코드 분석 시작...")
+            status.write("✅ 팝업창 포착! 소스코드 정밀 분석 시작...")
         else:
             status.warning("⚠️ 팝업창 없음")
             return None
 
         # -------------------------------------------------------
-        # [5] 데이터 추출 (BeautifulSoup 사용)
+        # [5] 데이터 추출 (블로그 방식: BeautifulSoup 파싱)
         # -------------------------------------------------------
         
-        # 전략: 연도를 클릭해서 펼쳐야 HTML 안에 '월' 데이터가 생김.
-        # 따라서 2026년 클릭 -> 소스 가져오기 -> 2025년 클릭 -> 소스 가져오기
-        
-        # (A) 2026년 1월 데이터
-        status.write("👉 2026년 데이터 추출 중...")
-        try:
-            # 2026년 클릭 (데이터 펼치기)
-            year_btn = driver.find_element(By.XPATH, "//*[contains(text(), '2026년')]")
-            driver.execute_script("arguments[0].click();", year_btn)
-            time.sleep(2) # 펼쳐질 시간
-        except:
-            pass # 2026년이 없을 수도 있음
-            
-        # ★ 현재 화면의 HTML 소스를 통째로 긁어옴
-        html_2026 = driver.page_source
-        val_2026 = parse_data_from_html(html_2026, "2026", "1월")
+        # (A) 2026년 1월
+        status.write("👉 2026년 데이터 분석 중...")
+        val_2026 = parse_table_manually(driver, "2026", "1월")
         results.append({"연도": "2026", "월": "1월", "수출금액": val_2026})
         
-        # (B) 2025년 12월 데이터
-        status.write("👉 2025년 데이터 추출 중...")
-        try:
-            # 2025년 클릭 (데이터 펼치기)
-            year_btn = driver.find_element(By.XPATH, "//*[contains(text(), '2025년')]")
-            driver.execute_script("arguments[0].click();", year_btn)
-            time.sleep(2)
-        except:
-            pass
-            
-        # ★ 현재 화면의 HTML 소스를 통째로 긁어옴
-        html_2025 = driver.page_source
-        val_2025 = parse_data_from_html(html_2025, "2025", "12월")
+        # (B) 2025년 12월
+        status.write("👉 2025년 데이터 분석 중...")
+        val_2025 = parse_table_manually(driver, "2025", "12월")
         results.append({"연도": "2025", "월": "12월", "수출금액": val_2025})
 
     except Exception as e:
