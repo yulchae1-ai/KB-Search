@@ -5,8 +5,8 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.action_chains import ActionChains
 import time
 from datetime import datetime
 import io
@@ -15,8 +15,8 @@ import io
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
 st.set_page_config(page_title="K-STAT 무역통계 수집기", layout="centered")
-st.title("🚢 K-STAT 데이터 수집기 (개선판)")
-st.info("시작코드 입력창을 직접 찾아 클릭하여 데이터를 조회합니다.")
+st.title("🚢 K-STAT 데이터 수집기")
+st.info("국내통계 → 품목 수출입 → 총괄 → Tab 4번 → HSK 코드 입력")
 
 # 입력 폼
 with st.form("input_form"):
@@ -24,99 +24,32 @@ with st.form("input_form"):
     submit = st.form_submit_button("데이터 수집 시작 🚀")
 
 # --------------------------------------------------------------------------
-# 2. 헬퍼 함수들
+# 2. 헬퍼 함수
 # --------------------------------------------------------------------------
-def safe_find_element(driver, by, value, timeout=10):
-    """안전하게 요소를 찾는 함수"""
-    try:
-        wait = WebDriverWait(driver, timeout)
-        element = wait.until(EC.presence_of_element_located((by, value)))
-        return element
-    except:
-        return None
-
 def safe_click(driver, element):
-    """안전하게 클릭하는 함수"""
+    """JavaScript로 안전하게 클릭"""
     try:
-        driver.execute_script("arguments[0].scrollIntoView(true);", element)
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
         time.sleep(0.3)
         driver.execute_script("arguments[0].click();", element)
         return True
     except:
-        return False
+        try:
+            element.click()
+            return True
+        except:
+            return False
 
-def find_input_in_all_frames(driver, input_selectors, timeout=15):
-    """모든 프레임을 탐색하여 입력창 찾기"""
-    
-    # 1. 메인 프레임에서 먼저 시도
-    driver.switch_to.default_content()
-    for selector_type, selector_value in input_selectors:
+def wait_and_click(driver, wait, xpaths, description="요소"):
+    """여러 XPATH 중 하나를 찾아서 클릭"""
+    for xpath in xpaths:
         try:
-            element = WebDriverWait(driver, 3).until(
-                EC.presence_of_element_located((selector_type, selector_value))
-            )
-            if element:
-                return element, "main"
+            element = wait.until(EC.element_to_be_clickable((By.XPATH, xpath)))
+            if safe_click(driver, element):
+                return True
         except:
             continue
-    
-    # 2. 모든 iframe 탐색
-    driver.switch_to.default_content()
-    iframes = driver.find_elements(By.TAG_NAME, "iframe")
-    
-    for idx, iframe in enumerate(iframes):
-        try:
-            driver.switch_to.default_content()
-            
-            # iframe이 보이고 상호작용 가능한지 확인
-            WebDriverWait(driver, 5).until(EC.frame_to_be_available_and_switch_to_it(iframe))
-            
-            for selector_type, selector_value in input_selectors:
-                try:
-                    element = WebDriverWait(driver, 2).until(
-                        EC.presence_of_element_located((selector_type, selector_value))
-                    )
-                    if element:
-                        return element, f"iframe_{idx}"
-                except:
-                    continue
-                    
-        except Exception as e:
-            continue
-    
-    # 3. 중첩 iframe 탐색
-    driver.switch_to.default_content()
-    for idx, iframe in enumerate(iframes):
-        try:
-            driver.switch_to.default_content()
-            driver.switch_to.frame(iframe)
-            
-            nested_iframes = driver.find_elements(By.TAG_NAME, "iframe")
-            for nested_idx, nested_iframe in enumerate(nested_iframes):
-                try:
-                    driver.switch_to.frame(nested_iframe)
-                    
-                    for selector_type, selector_value in input_selectors:
-                        try:
-                            element = WebDriverWait(driver, 2).until(
-                                EC.presence_of_element_located((selector_type, selector_value))
-                            )
-                            if element:
-                                return element, f"iframe_{idx}_nested_{nested_idx}"
-                        except:
-                            continue
-                    
-                    driver.switch_to.parent_frame()
-                except:
-                    try:
-                        driver.switch_to.parent_frame()
-                    except:
-                        pass
-                    continue
-        except:
-            continue
-    
-    return None, None
+    return False
 
 # --------------------------------------------------------------------------
 # 3. 크롤링 함수
@@ -124,18 +57,17 @@ def find_input_in_all_frames(driver, input_selectors, timeout=15):
 def run_crawler(target_hsk):
     status = st.empty()
     debug_area = st.expander("🔍 디버그 정보", expanded=False)
+    
     status.write("⏳ 브라우저 초기화 중...")
 
     # 브라우저 옵션
     options = Options()
-    options.add_argument("--headless=new")  # 새로운 headless 모드
+    options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    
-    # 자동화 탐지 우회
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option('useAutomationExtension', False)
     
@@ -145,266 +77,253 @@ def run_crawler(target_hsk):
     driver = webdriver.Chrome(options=options)
     driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     
-    wait = WebDriverWait(driver, 20)
+    wait = WebDriverWait(driver, 15)
+    actions = ActionChains(driver)
     results = []
 
     try:
         # ============================================================
-        # [단계 1] 직접 품목별 수출입 페이지로 이동
+        # [단계 1] K-STAT 메인 페이지 접속
         # ============================================================
-        status.write("⏳ K-STAT 품목별 수출입 페이지 접속 중...")
+        status.write("⏳ K-STAT 메인 페이지 접속 중...")
+        driver.get("https://stat.kita.net/")
+        time.sleep(3)
         
-        # 직접 URL로 접근 시도 (메뉴 클릭 대신)
-        direct_urls = [
-            "https://stat.kita.net/stat/kts/ctr/CtrItemImpExpList.screen",
-            "https://stat.kita.net/stat/kts/prod/ProdItemImpExpList.screen",
-            "https://stat.kita.net/stat/istat/item/ItemDetailImpExpList.screen"
-        ]
-        
-        page_loaded = False
-        for url in direct_urls:
-            try:
-                driver.get(url)
-                time.sleep(3)
-                
-                # 페이지가 올바르게 로드되었는지 확인
-                if "품목" in driver.page_source or "HSK" in driver.page_source or "코드" in driver.page_source:
-                    page_loaded = True
-                    with debug_area:
-                        st.write(f"✅ 접속 성공: {url}")
-                    break
-            except:
-                continue
-        
-        # 직접 URL 실패시 메인에서 시작
-        if not page_loaded:
-            status.write("⏳ 메인 페이지에서 메뉴 이동 중...")
-            driver.get("https://stat.kita.net/")
-            time.sleep(3)
-            
-            # 메뉴 클릭 시도
-            menu_clicked = False
-            menu_xpaths = [
-                "//a[contains(text(), '국내통계')]",
-                "//span[contains(text(), '국내통계')]",
-                "//*[@id='menu']//a[contains(@href, 'item')]"
-            ]
-            
-            for xpath in menu_xpaths:
-                try:
-                    menu = driver.find_element(By.XPATH, xpath)
-                    safe_click(driver, menu)
-                    time.sleep(2)
-                    menu_clicked = True
-                    break
-                except:
-                    continue
-            
-            # 품목 수출입 서브메뉴 클릭
-            submenu_xpaths = [
-                "//a[contains(text(), '품목별')]",
-                "//a[contains(text(), '품목 수출입')]",
-                "//a[contains(text(), '품목수출입')]"
-            ]
-            
-            for xpath in submenu_xpaths:
-                try:
-                    submenu = WebDriverWait(driver, 5).until(
-                        EC.element_to_be_clickable((By.XPATH, xpath))
-                    )
-                    safe_click(driver, submenu)
-                    time.sleep(3)
-                    break
-                except:
-                    continue
-
-        # 스크린샷 저장 (디버그용)
         with debug_area:
-            st.image(driver.get_screenshot_as_png(), caption="현재 화면")
+            st.image(driver.get_screenshot_as_png(), caption="1. 메인 페이지")
 
         # ============================================================
-        # [단계 2] 입력창 찾기 (다양한 선택자 시도)
+        # [단계 2] '국내통계' 메뉴 클릭
         # ============================================================
-        status.write("⏳ HSK 코드 입력창 찾는 중...")
+        status.write("⏳ '국내통계' 메뉴 클릭 중...")
         
-        # 다양한 선택자 목록 (우선순위 순)
-        input_selectors = [
-            (By.ID, "s_st_hsk_no"),
-            (By.ID, "st_hsk_no"),
-            (By.ID, "hsk_no"),
-            (By.ID, "hskCd"),
-            (By.ID, "hs_cd"),
-            (By.NAME, "s_st_hsk_no"),
-            (By.NAME, "st_hsk_no"),
-            (By.NAME, "hsk_no"),
-            (By.CSS_SELECTOR, "input[id*='hsk']"),
-            (By.CSS_SELECTOR, "input[id*='hs_']"),
-            (By.CSS_SELECTOR, "input[name*='hsk']"),
-            (By.CSS_SELECTOR, "input[name*='hs_']"),
-            (By.XPATH, "//input[contains(@id, 'hsk')]"),
-            (By.XPATH, "//input[contains(@id, 'hs_')]"),
-            (By.XPATH, "//input[contains(@name, 'hsk')]"),
-            (By.XPATH, "//td[contains(text(), '시작코드')]/following-sibling::td//input"),
-            (By.XPATH, "//th[contains(text(), '시작코드')]/following-sibling::td//input"),
-            (By.XPATH, "//label[contains(text(), 'HSK')]/following::input[1]"),
-            (By.XPATH, "//span[contains(text(), '시작')]/ancestor::td/following-sibling::td//input"),
-            (By.CSS_SELECTOR, ".search_box input[type='text']"),
-            (By.CSS_SELECTOR, ".srch_box input[type='text']"),
-            (By.XPATH, "//input[@type='text'][1]"),  # 첫 번째 텍스트 입력창
+        domestic_xpaths = [
+            "//a[contains(text(), '국내통계')]",
+            "//span[contains(text(), '국내통계')]",
+            "//*[contains(text(), '국내통계')]",
+            "//li[contains(@class, 'menu')]//a[contains(text(), '국내')]",
         ]
         
-        input_box, frame_location = find_input_in_all_frames(driver, input_selectors)
-        
-        if input_box is None:
-            status.error("❌ 입력창을 찾지 못했습니다.")
-            
-            # 페이지 소스에서 input 태그 분석
-            with debug_area:
-                st.write("📋 페이지 내 input 요소 분석:")
-                driver.switch_to.default_content()
-                page_html = driver.page_source
-                
-                # 간단한 input 태그 추출
-                import re
-                inputs = re.findall(r'<input[^>]*>', page_html, re.IGNORECASE)
-                for inp in inputs[:20]:  # 처음 20개만
-                    st.code(inp)
-                
-                st.image(driver.get_screenshot_as_png(), caption="오류 발생 시점 화면")
-            
+        if not wait_and_click(driver, wait, domestic_xpaths, "국내통계"):
+            status.error("❌ '국내통계' 메뉴를 찾지 못했습니다.")
+            st.image(driver.get_screenshot_as_png())
             return None
         
+        time.sleep(2)
+        
         with debug_area:
-            st.write(f"✅ 입력창 발견 위치: {frame_location}")
+            st.image(driver.get_screenshot_as_png(), caption="2. 국내통계 클릭 후")
 
         # ============================================================
-        # [단계 3] HSK 코드 입력 및 조회
+        # [단계 3] '품목 수출입' 클릭
+        # ============================================================
+        status.write("⏳ '품목 수출입' 메뉴 클릭 중...")
+        
+        item_xpaths = [
+            "//a[contains(text(), '품목 수출입')]",
+            "//a[contains(text(), '품목수출입')]",
+            "//a[contains(text(), '품목별')]",
+            "//span[contains(text(), '품목 수출입')]",
+            "//*[contains(text(), '품목 수출입')]",
+            "//li//a[contains(@href, 'item') or contains(@href, 'Item')]",
+        ]
+        
+        if not wait_and_click(driver, wait, item_xpaths, "품목 수출입"):
+            status.error("❌ '품목 수출입' 메뉴를 찾지 못했습니다.")
+            st.image(driver.get_screenshot_as_png())
+            return None
+        
+        time.sleep(3)
+        
+        with debug_area:
+            st.image(driver.get_screenshot_as_png(), caption="3. 품목 수출입 클릭 후")
+
+        # ============================================================
+        # [단계 4] '총괄' 탭 클릭
+        # ============================================================
+        status.write("⏳ '총괄' 탭 클릭 중...")
+        
+        # iframe 확인 및 전환
+        iframes = driver.find_elements(By.TAG_NAME, "iframe")
+        for iframe in iframes:
+            try:
+                driver.switch_to.frame(iframe)
+                # 총괄 탭이 있는지 확인
+                if len(driver.find_elements(By.XPATH, "//*[contains(text(), '총괄')]")) > 0:
+                    break
+                driver.switch_to.default_content()
+            except:
+                driver.switch_to.default_content()
+                continue
+        
+        total_xpaths = [
+            "//a[contains(text(), '총괄')]",
+            "//span[contains(text(), '총괄')]",
+            "//li[contains(text(), '총괄')]",
+            "//button[contains(text(), '총괄')]",
+            "//*[@class='tab' or contains(@class, 'tab')]//a[contains(text(), '총괄')]",
+            "//*[contains(@class, 'tab')]//*[contains(text(), '총괄')]",
+            "//div[contains(@class, 'tab')]//a[1]",  # 첫 번째 탭
+        ]
+        
+        if not wait_and_click(driver, wait, total_xpaths, "총괄"):
+            status.warning("⚠️ '총괄' 탭을 명시적으로 찾지 못함. 계속 진행...")
+        
+        time.sleep(2)
+        
+        with debug_area:
+            st.image(driver.get_screenshot_as_png(), caption="4. 총괄 탭 클릭 후")
+
+        # ============================================================
+        # [단계 5] Tab 4번 눌러서 HSK 코드 입력란으로 이동
+        # ============================================================
+        status.write("⏳ Tab 키로 HSK 코드 입력란 이동 중...")
+        
+        # 먼저 페이지 body에 포커스
+        try:
+            body = driver.find_element(By.TAG_NAME, "body")
+            body.click()
+        except:
+            pass
+        
+        time.sleep(0.5)
+        
+        # Tab 키 4번 누르기
+        for i in range(4):
+            actions.send_keys(Keys.TAB).perform()
+            time.sleep(0.3)
+        
+        time.sleep(0.5)
+        
+        # 현재 포커스된 요소 가져오기
+        try:
+            active_element = driver.switch_to.active_element
+            
+            with debug_area:
+                st.write(f"포커스된 요소 태그: {active_element.tag_name}")
+                st.write(f"포커스된 요소 ID: {active_element.get_attribute('id')}")
+                st.write(f"포커스된 요소 Name: {active_element.get_attribute('name')}")
+        except Exception as e:
+            with debug_area:
+                st.write(f"활성 요소 확인 오류: {e}")
+
+        # ============================================================
+        # [단계 6] HSK 코드 입력
         # ============================================================
         status.write(f"⏳ HSK 코드 '{target_hsk}' 입력 중...")
         
         try:
-            # 입력창이 상호작용 가능할 때까지 대기
-            WebDriverWait(driver, 10).until(EC.element_to_be_clickable(input_box))
+            active_element = driver.switch_to.active_element
             
-            # 기존 값 지우고 입력
-            input_box.click()
-            time.sleep(0.5)
-            input_box.clear()
-            time.sleep(0.3)
-            
-            # send_keys 대신 JavaScript로 값 설정
-            driver.execute_script("arguments[0].value = '';", input_box)
+            # 입력창 초기화 및 입력
+            active_element.clear()
             time.sleep(0.2)
-            driver.execute_script(f"arguments[0].value = '{target_hsk}';", input_box)
-            
-            # 이벤트 트리거 (React/Vue 등 SPA 대응)
-            driver.execute_script("""
-                arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
-                arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
-            """, input_box)
-            
+            active_element.send_keys(target_hsk)
             time.sleep(0.5)
             
             # 입력 확인
-            entered_value = input_box.get_attribute('value')
+            entered_value = active_element.get_attribute('value')
             with debug_area:
-                st.write(f"입력된 값: {entered_value}")
+                st.write(f"✅ 입력된 값: {entered_value}")
             
+            if entered_value != target_hsk:
+                # JavaScript로 직접 입력 시도
+                driver.execute_script(f"arguments[0].value = '{target_hsk}';", active_element)
+                driver.execute_script("""
+                    arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+                    arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
+                """, active_element)
+                
         except Exception as e:
-            status.error(f"❌ 코드 입력 실패: {str(e)}")
-            with debug_area:
-                st.image(driver.get_screenshot_as_png())
+            status.error(f"❌ HSK 코드 입력 실패: {e}")
+            st.image(driver.get_screenshot_as_png())
             return None
+        
+        with debug_area:
+            st.image(driver.get_screenshot_as_png(), caption="5. HSK 코드 입력 후")
 
         # ============================================================
-        # [단계 4] 조회 버튼 클릭
+        # [단계 7] '조회' 버튼 클릭
         # ============================================================
-        status.write("⏳ 조회 버튼 클릭 중...")
+        status.write("⏳ '조회' 버튼 클릭 중...")
         
-        search_btn_selectors = [
-            (By.XPATH, "//button[contains(text(), '조회')]"),
-            (By.XPATH, "//a[contains(text(), '조회')]"),
-            (By.XPATH, "//input[@value='조회']"),
-            (By.XPATH, "//*[contains(@class, 'btn')][contains(text(), '조회')]"),
-            (By.XPATH, "//span[contains(text(), '조회')]/parent::*"),
-            (By.CSS_SELECTOR, ".btn_search"),
-            (By.CSS_SELECTOR, "button.search"),
-            (By.CSS_SELECTOR, "a.search"),
-            (By.ID, "btnSearch"),
-            (By.ID, "searchBtn"),
-            (By.NAME, "search"),
+        search_xpaths = [
+            "//button[contains(text(), '조회')]",
+            "//a[contains(text(), '조회')]",
+            "//input[@value='조회']",
+            "//span[contains(text(), '조회')]/parent::button",
+            "//span[contains(text(), '조회')]/parent::a",
+            "//*[contains(@class, 'btn')][contains(text(), '조회')]",
+            "//*[contains(@class, 'search')][contains(text(), '조회')]",
+            "//img[contains(@alt, '조회')]/parent::*",
+            "//*[@id='btnSearch']",
+            "//*[@id='searchBtn']",
         ]
         
         search_clicked = False
-        for selector_type, selector_value in search_btn_selectors:
+        for xpath in search_xpaths:
             try:
-                search_btn = driver.find_element(selector_type, selector_value)
+                search_btn = driver.find_element(By.XPATH, xpath)
                 safe_click(driver, search_btn)
                 search_clicked = True
                 with debug_area:
-                    st.write(f"✅ 조회 버튼 클릭 성공: {selector_value}")
+                    st.write(f"✅ 조회 버튼 클릭 성공: {xpath}")
                 break
             except:
                 continue
         
         if not search_clicked:
-            # Enter 키로 시도
+            # Enter 키로 조회 시도
             try:
-                input_box.send_keys(Keys.ENTER)
-                search_clicked = True
+                active_element.send_keys(Keys.ENTER)
                 with debug_area:
                     st.write("✅ Enter 키로 조회 시도")
             except:
-                pass
+                status.warning("⚠️ 조회 버튼을 찾지 못했습니다.")
         
-        if not search_clicked:
-            status.warning("⚠️ 조회 버튼을 찾지 못했습니다. Enter 키로 시도합니다.")
-        
-        status.write("⏳ 검색 결과 대기 중...")
+        status.write("⏳ 검색 결과 로딩 대기 중...")
         time.sleep(5)
         
         with debug_area:
-            st.image(driver.get_screenshot_as_png(), caption="조회 후 화면")
+            st.image(driver.get_screenshot_as_png(), caption="6. 조회 버튼 클릭 후")
 
         # ============================================================
-        # [단계 5] 결과 링크 클릭
+        # [단계 8] 결과 링크 클릭 (상세 페이지 이동)
         # ============================================================
-        status.write("⏳ 검색 결과 링크 찾는 중...")
+        status.write("⏳ 검색 결과에서 상세 링크 클릭 중...")
         
-        result_link_selectors = [
-            (By.XPATH, f"//a[contains(text(), '{target_hsk}')]"),
-            (By.XPATH, f"//td[contains(text(), '{target_hsk}')]/a"),
-            (By.XPATH, f"//a[contains(@href, '{target_hsk}')]"),
-            (By.XPATH, "//table//tbody//tr[1]//a"),  # 첫 번째 결과 링크
-            (By.CSS_SELECTOR, "table tbody tr td a"),
+        result_xpaths = [
+            f"//a[contains(text(), '{target_hsk}')]",
+            f"//td[contains(text(), '{target_hsk}')]//a",
+            f"//tr[contains(., '{target_hsk}')]//a",
+            "//table//tbody//tr[1]//td//a",
+            "//table//tr[2]//td//a",  # 헤더 제외 첫 번째 행
         ]
         
-        link_clicked = False
-        for selector_type, selector_value in result_link_selectors:
+        for xpath in result_xpaths:
             try:
                 result_link = WebDriverWait(driver, 5).until(
-                    EC.presence_of_element_located((selector_type, selector_value))
+                    EC.element_to_be_clickable((By.XPATH, xpath))
                 )
                 safe_click(driver, result_link)
-                link_clicked = True
                 with debug_area:
-                    st.write(f"✅ 결과 링크 클릭: {selector_value}")
+                    st.write(f"✅ 결과 링크 클릭: {xpath}")
                 break
             except:
                 continue
         
-        if not link_clicked:
-            status.warning("⚠️ 결과 링크를 찾지 못했습니다. 현재 페이지에서 데이터 추출 시도...")
-        
         time.sleep(3)
         
-        # 새 창/탭 확인
+        # 새 창 확인
         if len(driver.window_handles) > 1:
             driver.switch_to.window(driver.window_handles[-1])
             time.sleep(2)
+        
+        with debug_area:
+            st.image(driver.get_screenshot_as_png(), caption="7. 상세 페이지")
 
         # ============================================================
-        # [단계 6] 데이터 추출
+        # [단계 9] 데이터 추출
         # ============================================================
         status.write("⏳ 데이터 추출 중...")
         
@@ -419,47 +338,64 @@ def run_crawler(target_hsk):
             prev_year = str(now.year)
             prev_month = f"{now.month - 1:02d}"
 
-        # 테이블 데이터 추출
         try:
             html = driver.page_source
             dfs = pd.read_html(html, encoding='utf-8')
             
             with debug_area:
                 st.write(f"📊 발견된 테이블 수: {len(dfs)}")
-                for i, df in enumerate(dfs[:5]):
+                for i, df in enumerate(dfs[:3]):
                     st.write(f"테이블 {i}:")
-                    st.dataframe(df.head())
+                    st.dataframe(df.head(10))
             
-            # 수출 데이터 찾기
+            # 수출 데이터 추출 로직
+            found_data = False
             for df in dfs:
-                df_str = df.to_string()
-                if '수출' in df_str or '금액' in df_str:
-                    results.append({
-                        "구분": "당월",
-                        "기간": f"{cur_year}-{cur_month}",
-                        "수출금액": "테이블 데이터 확인 필요"
-                    })
-                    results.append({
-                        "구분": "전월", 
-                        "기간": f"{prev_year}-{prev_month}",
-                        "수출금액": "테이블 데이터 확인 필요"
-                    })
-                    break
+                cols = [str(c).lower() for c in df.columns]
+                if any('수출' in c or 'export' in c for c in cols):
+                    found_data = True
+                    
+                    # 당월/전월 데이터 찾기
+                    for idx, row in df.iterrows():
+                        row_str = ' '.join([str(v) for v in row.values])
+                        
+                        if cur_month in row_str or f"{cur_year}.{cur_month}" in row_str:
+                            export_val = "확인 필요"
+                            for col in df.columns:
+                                if '수출' in str(col) and '금액' in str(col):
+                                    export_val = row[col]
+                                    break
+                            results.append({
+                                "구분": "당월",
+                                "기간": f"{cur_year}-{cur_month}",
+                                "수출금액": export_val
+                            })
+                            
+            if not found_data:
+                results.append({
+                    "구분": "당월",
+                    "기간": f"{cur_year}-{cur_month}",
+                    "수출금액": "테이블에서 수출 데이터 확인 필요"
+                })
+                results.append({
+                    "구분": "전월",
+                    "기간": f"{prev_year}-{prev_month}",
+                    "수출금액": "테이블에서 수출 데이터 확인 필요"
+                })
                     
         except Exception as e:
             with debug_area:
                 st.write(f"테이블 파싱 오류: {e}")
-            
             results.append({
-                "구분": "당월",
-                "기간": f"{cur_year}-{cur_month}",
-                "수출금액": "데이터 추출 실패"
+                "구분": "오류",
+                "기간": "N/A",
+                "수출금액": str(e)
             })
 
         if not results:
             results.append({
                 "구분": "N/A",
-                "기간": "N/A", 
+                "기간": "N/A",
                 "수출금액": "데이터를 찾지 못했습니다"
             })
 
