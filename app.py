@@ -14,8 +14,8 @@ from datetime import datetime
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
 st.set_page_config(page_title="K-STAT 무역통계 수집기", layout="centered")
-st.title("🚢 K-STAT 키보드 정밀 타격")
-st.info("HSK 입력 -> 키보드 화살표 이동(DOWN/RIGHT) -> 데이터 낚아채기")
+st.title("🚢 K-STAT 키보드 정밀 타격 (Fix Ver)")
+st.info("키보드 포커스 강제 조정 + 데이터 강제 추출 로직 적용")
 
 # 입력 폼
 with st.form("input_form"):
@@ -23,50 +23,72 @@ with st.form("input_form"):
     submit = st.form_submit_button("데이터 수집 시작 🚀")
 
 # --------------------------------------------------------------------------
-# 2. 키보드 네비게이션 함수 (핵심: DOWN N번 -> RIGHT 1번)
+# 2. 키보드 네비게이션 함수 (핵심 수정)
 # --------------------------------------------------------------------------
 def get_data_by_arrow_keys(driver, year, month_int):
     """
-    1. 해당 연도(year) 텍스트를 클릭 (트리 펼치기 & 포커스 잡기)
-    2. 월 숫자만큼 DOWN 키 입력 (1월=1번, 12월=12번)
-    3. RIGHT 키 1번 입력 (수출금액 칸으로 이동)
-    4. 현재 포커스된 요소의 텍스트 추출
+    1. 해당 연도 클릭
+    2. 월 숫자만큼 DOWN 입력
+    3. RIGHT 1번 입력
+    4. 현재 위치의 데이터 읽기 (실패 시 행 전체 읽어서 숫자 추출)
     """
     try:
-        # [1] 연도 클릭 (포커스 시작점)
+        # [1] 연도 찾기 및 클릭
+        xpath_year = f"//*[contains(text(), '{year}년')]"
         try:
-            xpath_year = f"//*[contains(text(), '{year}년')]"
             year_elem = driver.find_element(By.XPATH, xpath_year)
-            # 확실하게 클릭해서 포커스를 둡니다
+            # (1) JS로 강제 클릭 (트리 펼치기)
             driver.execute_script("arguments[0].click();", year_elem)
-            time.sleep(1) # 펼쳐지는 시간 대기
+            time.sleep(1)
+            
+            # (2) 포커스 확실하게 잡기 위해 일반 클릭 한번 더 시도
+            try: year_elem.click()
+            except: pass
         except:
             return "연도 없음"
 
-        # [2] 화살표 이동 매크로
+        # [2] 화살표 이동 (DOWN N번)
         actions = ActionChains(driver)
         
-        # (A) DOWN 키: 월 숫자만큼 반복
-        # 예: 1월 -> 1번, 12월 -> 12번
+        # DOWN 키 입력 (월 개수만큼)
         for _ in range(month_int):
             actions.send_keys(Keys.DOWN)
-        
-        # (B) RIGHT 키: 1번 (금액 칸으로 이동)
-        actions.send_keys(Keys.RIGHT)
-        
-        # 액션 실행
         actions.perform()
-        time.sleep(0.5) # 커서 이동 대기
+        time.sleep(0.5)
 
-        # [3] 현재 포커스 잡힌 데이터 가져오기 (핵심!)
-        # switch_to.active_element는 현재 커서가 깜빡이는 곳의 정보를 가져옵니다.
+        # [3] RIGHT 키 입력 (1번) -> 데이터 칸으로 이동 시도
+        actions.send_keys(Keys.RIGHT)
+        actions.perform()
+        time.sleep(0.5)
+
+        # [4] 데이터 읽기 (여기가 중요!)
+        # 현재 커서가 깜빡이는 요소(active element)를 가져옴
         active_element = driver.switch_to.active_element
-        result_text = active_element.text.strip()
-
-        if result_text:
-            return result_text
+        text = active_element.text.strip()
+        
+        # Case A: RIGHT키가 잘 먹어서 숫자를 잡았을 경우
+        if text and any(char.isdigit() for char in text) and "월" not in text:
+            return text
+        
+        # Case B: RIGHT키를 눌렀는데도 여전히 "12월" 글자에 커서가 있을 경우 (빈 값 or 월 텍스트)
+        # -> 현재 잡고 있는 요소의 '부모 행(TR)'을 찾아서 그 안의 숫자를 가져옴
         else:
-            return "빈 값"
+            try:
+                # 현재 요소(예: 12월)의 부모 행(tr) 찾기
+                parent_row = active_element.find_element(By.XPATH, "./ancestor::tr")
+                row_text = parent_row.text
+                
+                # 행 전체 텍스트(예: "12월 256,598 7.0 ...")에서 숫자만 추출
+                # 공백으로 나누고, 콤마가 있거나 숫자인 것 중 '월'이 아닌 첫 번째 것을 선택
+                parts = row_text.split()
+                for part in parts:
+                    clean_part = part.replace(',', '').strip()
+                    if clean_part.isdigit() and "월" not in part and part != year:
+                        return part # 256,598 리턴
+                
+                return row_text # 못 찾으면 행 전체라도 반환
+            except:
+                return "데이터 추출 실패"
 
     except Exception as e:
         return f"에러: {str(e)}"
@@ -170,14 +192,12 @@ def run_crawler(target_hsk):
             status.warning("⚠️ 팝업창 없음")
             return None
 
-        # [5] 화살표 이동으로 데이터 추출 (사용자 요청 로직)
+        # [5] 화살표 이동으로 데이터 추출 (수정된 로직)
         
         now = datetime.now()
-        # 현재: 2026-01 (예시)
         cur_year = now.year
         cur_month = now.month
         
-        # 전월 계산
         if cur_month == 1:
             prev_year = cur_year - 1
             prev_month = 12
@@ -210,5 +230,6 @@ if submit:
     
     if df_result is not None:
         st.success("🎉 추출 성공!")
-        st.write("### 📊 키보드 추출 결과")
+        st.write("### 📊 결과 확인")
         st.dataframe(df_result, use_container_width=True)
+        
