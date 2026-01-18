@@ -3,4 +3,4 @@ pandas
 selenium
 openpyxl
 lxml
-beautifulsoup4
+
