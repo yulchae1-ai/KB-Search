@@ -15,8 +15,8 @@ import io
 # 1. 페이지 설정
 # --------------------------------------------------------------------------
 st.set_page_config(page_title="K-STAT 무역통계 수집기", layout="centered")
-st.title("🚢 K-STAT 데이터 수집기 (TAB 2번)")
-st.info("사용자 정의: 'HSK' 클릭 -> TAB 2번 -> 입력 -> '조회' 버튼 클릭")
+st.title("🚢 K-STAT 데이터 수집기 (TAB 11회)")
+st.info("사용자 정의: [HSK 클릭] -> [TAB 2회] -> [입력] -> [TAB 11회] -> [엔터]")
 
 # 입력 폼
 with st.form("input_form"):
@@ -38,7 +38,6 @@ def run_crawler(target_hsk):
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
     
-    # User-Agent 설정
     ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
     options.add_argument(f"user-agent={ua}")
 
@@ -90,35 +89,32 @@ def run_crawler(target_hsk):
         if not found_frame:
             driver.switch_to.default_content()
 
-        # [3] 'HSK' 클릭 -> TAB 2번 -> 입력 -> 조회 버튼 클릭
-        status.write(f"⏳ 'HSK' 클릭 -> TAB 2번 -> {target_hsk} 입력...")
+        # [3] HSK 클릭 -> TAB 2번 -> 입력 -> TAB 11번 -> 엔터
+        status.write(f"⏳ 'HSK' 클릭 -> TAB 2번 -> 입력 -> TAB 11번 -> 엔터...")
         
         try:
-            # 1. 'HSK' 글자 찾기 (입력창 근처의 라벨)
-            # 보통 <label>이나 <td> 안에 있음
+            # 1. 'HSK' 라벨 클릭 (기준점)
             hsk_label = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'HSK')]")))
-            
-            # 2. 클릭 (포커스 기준점 잡기)
             hsk_label.click()
             time.sleep(1) 
             
-            # 3. TAB 2번 이동
+            # 2. TAB 2번 이동 후 입력
             actions.send_keys(Keys.TAB)
             actions.send_keys(Keys.TAB)
-            actions.perform()
-            time.sleep(0.5)
-
-            # 4. HSK 코드 입력
             actions.send_keys(target_hsk)
             actions.perform()
             time.sleep(0.5)
 
-            # 5. '조회' 버튼 찾아서 클릭 (엔터 대신 버튼 클릭)
-            status.write("⏳ '조회' 버튼 클릭 중...")
-            search_btn = driver.find_element(By.XPATH, "//*[contains(text(), '조회')]")
-            driver.execute_script("arguments[0].click();", search_btn)
+            # 3. TAB 11번 이동 후 엔터 (사용자 요청 핵심 로직)
+            status.write("⏳ TAB 11회 입력 후 엔터...")
+            for _ in range(11):
+                actions.send_keys(Keys.TAB)
             
-            status.write("✅ 조회 클릭 완료! 결과 로딩 대기...")
+            # 엔터 입력 (조회 실행)
+            actions.send_keys(Keys.ENTER)
+            actions.perform()
+            
+            status.write("✅ 엔터 입력 완료! 결과 로딩 대기...")
             time.sleep(5)
             
         except Exception as e:
@@ -127,7 +123,7 @@ def run_crawler(target_hsk):
             return None
 
         # [4] 결과 링크(파란색) 클릭
-        status.write("⏳ 결과 링크 클릭...")
+        status.write("⏳ 결과 링크(파란색 글씨) 클릭...")
         
         try:
             link_xpath = f"//a[contains(text(), '{target_hsk}')]"
@@ -138,7 +134,7 @@ def run_crawler(target_hsk):
             driver.execute_script("arguments[0].click();", link_el)
             time.sleep(5)
         except:
-            status.error("❌ 결과 링크를 찾지 못했습니다. (TAB 횟수 확인 필요)")
+            status.error("❌ 결과 링크를 찾지 못했습니다. (TAB 횟수 조절 필요 가능성)")
             st.image(driver.get_screenshot_as_png())
             return None
 
@@ -182,6 +178,7 @@ def run_crawler(target_hsk):
                 if found: break
                 for idx, row in df.iterrows():
                     txt = " ".join(row.astype(str).values)
+                    # "01월" 또는 "2026.01" 형식 찾기
                     if f"{int(m)}월" in txt or f"{y}.{m}" in txt:
                         if '수출금액' in df.columns: val = row['수출금액']
                         elif '수출' in df.columns: val = row['수출']
